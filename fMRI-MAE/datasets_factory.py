@@ -62,15 +62,15 @@ class DataAugmentationForVideoMAE(object):
 
 # for now, we need this because there are dots in __key__ when creating the dataset
 # don't need this after we fix the dataset creation
-def real_sample(src):
-    for sample in src:
-        for k, v in sample.items():
-            if k.endswith(".func.npy"):
-                yield {
-                    "__key__": sample["__key__"] + '.' + k[:-9],
-                    "__url__": sample["__url__"],
-                    "func.npy": v,
-                }
+# def real_sample(src):
+#     for sample in src:
+#         for k, v in sample.items():
+#             if k.endswith(".func.npy"):
+#                 yield {
+#                     "__key__": sample["__key__"] + '.' + k[:-9],
+#                     "__url__": sample["__url__"],
+#                     "func.npy": v,
+#                 }
 
 def build_pretraining_dataset(args):
     transform = DataAugmentationForVideoMAE(args)
@@ -79,7 +79,7 @@ def build_pretraining_dataset(args):
         urls = f"file:{tar_urls}"
     elif args.data_location == 's3':
         urls = f"pipe:aws s3 cp {tar_urls} -"
-    dataset = wds.WebDataset(urls, resampled=args.data_resample).decode("torch").compose(real_sample)\
+    dataset = wds.WebDataset(urls, resampled=args.data_resample).decode("torch")\
         .to_tuple("__key__", "func.npy")\
         .shuffle(args.data_buffer_size, initial=args.data_buffer_size, rng=random.Random(args.data_seed))\
         .map(transform)\

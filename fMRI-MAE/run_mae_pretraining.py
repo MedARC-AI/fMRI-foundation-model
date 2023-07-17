@@ -83,7 +83,7 @@ def get_args():
                         help='Training interpolation (random, bilinear, bicubic default: "bicubic")')
 
     # Dataset parameters
-    parser.add_argument('--data_urls', default='/scratch/openneuro-0-100-ps13-f8-r1-bspline-shuffled-old/func-{000000..000577}.tar', type=str, 
+    parser.add_argument('--data_urls', default='/scratch/openneuro-0-100-ps13-f8-r1-bspline-shuffled/func-{000000..000577}.tar', type=str, 
                         help='path to the dataset')
     parser.add_argument('--data_location', default='file', type=str, choices=['file', 'aws'], help='where the dataset stored')
     parser.add_argument('--data_resample', default=True, type=bool, help='whether to resample the dataset')

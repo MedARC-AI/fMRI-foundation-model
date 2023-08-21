@@ -1,7 +1,7 @@
 import os
 from torchvision import transforms
 from transforms import *
-from masking_generator import TubeMaskingGenerator
+from masking_generator import TubeMaskingGenerator, AgnosticMaskingGenerator
 
 import torchio as tio
 import datasets
@@ -32,7 +32,7 @@ class DataAugmentationForVideoMAE(object):
     def __init__(self, args):
         # TODO: add augmentation for fMRI
         self.transform = transforms.Compose([
-            tio.CropOrPad((65, 78, 65)),
+            # tio.CropOrPad((65, 78, 65)),
             # tio.RandomFlip(axes=('LR',)),
             # tio.RandomAffine(scales=(0.9, 1.1), degrees=10, isotropic=False, default_pad_value='otsu'),
             # tio.RandomAffine(scales=(0.9, 1.1)),
@@ -45,12 +45,15 @@ class DataAugmentationForVideoMAE(object):
             self.masked_position_generator = TubeMaskingGenerator(
                 args.window_size, args.mask_ratio, args.max_num_patches
             )
+        elif args.mask_type == 'random':
+            self.masked_position_generator = AgnosticMaskingGenerator(
+                args.window_size, args.mask_ratio, args.max_num_patches
+            )
 
     def __call__(self, sample):
         key, func = sample
         process_data = self.transform(func)
         paded, mask, token_shape = self.patchify(process_data)
-        # print(process_data.shape)
         return paded, token_shape, mask, self.masked_position_generator(token_shape)
 
     def __repr__(self):

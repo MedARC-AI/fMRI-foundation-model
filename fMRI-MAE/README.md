@@ -6,9 +6,12 @@
 
 - [x] Test out the gpu memory usage, and decide the batch size for one gpu. *200 for small model* 
 - [x] Bottleneck of data processing is downloading (multiple workers is useless), need to switch to webdataset for large scale training
-- [ ] Test out the cpu memory usage for each dataloader worker, and decide the data_buffer_size.
 - [x] Currently using float16 for input data. Some overflow was encountered when converting. Need some normalization.
 - [ ] Some data augmentations are very slow. Currently, all data augmentations are disabled. Need to test those.
+- [ ] Optimize data loading
+    * Currently it takes a big portion of the running time
+    * Need to look into which part of the data loading is slow, and how to accelerate
+    * VideoMAEV2 potentially needs less data (~50\% of the patches), but implementation of actually loading less data could be hard especially when there is some data augmentation
 - [ ] We can start with the small model and data_size as large as possible. Later we will need to decide the number of training epochs and data_size based on some scaling law. (NLP scaling law may not apply here. ) 
 - [ ] Transfer to VideoMAEV2 or other MAE pipelines.
 - [ ] Tune hyperparameters.
@@ -19,8 +22,9 @@
 - pip install boto3 datasets transformers nibabel
 
 ## Usage
+- Download data from aws s3 (s3://proj-fmri/openneuro-wds/openneuro-0-100-ps13-f8-r1-bspline-shuffled/) to /scratch/, or generate by your own.
 - bash pretrain.sh (for local)
-- bash pretrain_slurm.sh (for slurm jobs)
+- bash pretrain_slurm.sh (for slurm jobs, if data has been downloaded to the node)
 
 # README from Official PyTorch Implementation of VideoMAE (NeurIPS 2022 Spotlight).
 

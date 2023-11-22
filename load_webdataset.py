@@ -13,7 +13,8 @@ import webdataset as wds
 
 # tar_urls = "s3://proj-fmri/openneuro-wds/openneuro-0-100-ps13-f8-r1-bspline-shuffled/func-{000000..000577}.tar"
 # urls = f"pipe:aws s3 cp {tar_urls} -"
-urls = "file:/scratch/openneuro-0-100-ps13-f8-r1-bspline-shuffled-old/func-{000000..000577}.tar"
+# urls = "file:/scratch/openneuro-0-100-ps13-f8-r1-bspline-shuffled-old/func-{000000..000577}.tar"
+urls = "aws s3 cp s3://proj-fmri/openneuro-wds/openneuro-0-100-ps13-f8-r1-bspline-shuffled/func-{000000..000577}.tar -"
 
 def real_sample(src):
     for sample in src:

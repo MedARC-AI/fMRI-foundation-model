@@ -22,7 +22,7 @@ __all__ = [
     'pretrain_fmrimae_huge_patch13',
 ]
 
-def (pos_embed, x, token_shape, max_shape=(4, 10, 10, 10)):
+def get_pos_embed(pos_embed, x, token_shape, max_shape=(4, 10, 10, 10)):
     embeding = []
     embed_dim = pos_embed.shape[-1]
     reshaped_pos_embed = pos_embed.reshape(*max_shape, -1)

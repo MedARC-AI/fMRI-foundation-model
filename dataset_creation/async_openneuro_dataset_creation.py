@@ -69,6 +69,7 @@ async def list_objects_in_folder(bucket, folder):
 
     return object_keys
 
+@time_it
 async def main():
     bucket_name = 'openneuro.org'
     prefix = ''

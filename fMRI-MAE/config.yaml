@@ -1,0 +1,34 @@
+# Model Config
+use_cls_token: False
+use_contrastive_loss: False
+constrastive_loss_weight: 1.0
+
+# Training Configs
+global_batch_size: 8
+num_workers: 8
+mixed_precision: "fp16"
+num_epochs: 30
+seed: 42
+max_lr: 3.0e-5 # Keep the x.0 else will be converted to string
+num_samples_per_epoch: 512
+save_dir: ./checkpoints # state_dict and config will be saved here
+
+
+# MAE Config
+tube_mask_ratio: 0.75
+decoder_mask_ratio: 0.75
+
+# Model Config
+depth: 12
+heads: 12
+dim: 512
+mlp_dim: 512
+patch_size: 8
+frame_patch_size: 1
+use_rope_emb: False
+
+# Data Config
+input_size: [64, 64, 48] # Image Size
+num_frames: 4
+train_urls: "s3://proj-fmri/fmri_foundation_datasets/openneuro/{000001..000664}.tar"
+test_urls: "s3://proj-fmri/fmri_foundation_datasets/openneuro/000000.tar"

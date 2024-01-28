@@ -5,13 +5,14 @@ constrastive_loss_weight: 1.0
 
 # Training Configs
 global_batch_size: 8
-num_workers: 8
+num_workers: 0
 mixed_precision: "fp16"
 num_epochs: 30
 seed: 42
 max_lr: 3.0e-5 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 512
 save_dir: ./checkpoints # state_dict and config will be saved here
+save_per_epochs: 50
 
 
 # MAE Config

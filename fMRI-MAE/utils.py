@@ -1,5 +1,6 @@
 from io import BytesIO
-
+import os
+import random
 import numpy as np
 import torch
 from einops import rearrange
@@ -15,6 +16,15 @@ def is_interactive():
 
     return not hasattr(main, "__file__")
 
+
+def seed_everything(seed=0, cudnn_deterministic=True):
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    
 
 def grayscale_decoder(image_data):
     return np.array(Image.open(BytesIO(image_data))).astype(np.float32) / 65535
@@ -127,6 +137,11 @@ def plot_slices(unpatches):
     return transforms.ToPILImage()(reshape_to_2d(unpatches))
 
 
+def check_loss(loss):
+    if loss.isnan().any():
+        raise ValueError('NaN loss')
+        
+
 def count_params(model):
     total = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -151,3 +166,82 @@ def contrastive_loss(
         + torch.nn.functional.cross_entropy(feat2, labels)
     ) / 2
     return loss
+
+### MindEye functions ###
+
+def soft_clip_loss(preds, targs, temp=0.006):
+    clip_clip = (targs @ targs.T)/temp
+    brain_clip = (preds @ targs.T)/temp
+    loss1 = -(brain_clip.log_softmax(-1) * clip_clip.softmax(-1)).sum(-1).mean()
+    loss2 = -(brain_clip.T.log_softmax(-1) * clip_clip.softmax(-1)).sum(-1).mean()
+    
+    loss = (loss1 + loss2)/2
+    return loss
+
+def cosine_anneal(start, end, steps):
+    return end + (start - end)/2 * (1 + torch.cos(torch.pi*torch.arange(steps)/(steps-1)))
+
+def mixco(voxels, beta=0.15, s_thresh=0.5, perm=None, betas=None, select=None):
+    if perm is None:
+        perm = torch.randperm(voxels.shape[0])
+    voxels_shuffle = voxels[perm].to(voxels.device,dtype=voxels.dtype)
+    if betas is None:
+        betas = torch.distributions.Beta(beta, beta).sample([voxels.shape[0]]).to(voxels.device,dtype=voxels.dtype)
+    if select is None:
+        select = (torch.rand(voxels.shape[0]) <= s_thresh).to(voxels.device)
+    betas_shape = [-1] + [1]*(len(voxels.shape)-1)
+    voxels[select] = voxels[select] * betas[select].reshape(*betas_shape) + \
+        voxels_shuffle[select] * (1 - betas[select]).reshape(*betas_shape)
+    betas[~select] = 1
+    return voxels, perm, betas, select
+
+def mixco_nce(preds, targs, temp=0.1, perm=None, betas=None, select=None, distributed=False, 
+              accelerator=None, local_rank=None, bidirectional=True):
+    brain_clip = (preds @ targs.T)/temp
+    
+    if perm is not None and betas is not None and select is not None:
+        probs = torch.diag(betas)
+        probs[torch.arange(preds.shape[0]).to(preds.device), perm] = 1 - betas
+
+        loss = -(brain_clip.log_softmax(-1) * probs).sum(-1).mean()
+        if bidirectional:
+            loss2 = -(brain_clip.T.log_softmax(-1) * probs.T).sum(-1).mean()
+            loss = (loss + loss2)/2
+        return loss
+    else:
+        loss =  F.cross_entropy(brain_clip, torch.arange(brain_clip.shape[0]).to(brain_clip.device))
+        if bidirectional:
+            loss2 = F.cross_entropy(brain_clip.T, torch.arange(brain_clip.shape[0]).to(brain_clip.device))
+            loss = (loss + loss2)/2
+        return loss
+    
+def topk(similarities,labels,k=5):
+    if k > similarities.shape[0]:
+        k = similarities.shape[0]
+    topsum=0
+    for i in range(k):
+        topsum += torch.sum(torch.argsort(similarities,axis=1)[:,-(i+1)] == labels)/len(labels)
+    return topsum
+
+def batchwise_cosine_similarity(Z,B):
+    Z = Z.flatten(1)
+    B = B.flatten(1).T
+    Z_norm = torch.linalg.norm(Z, dim=1, keepdim=True)  # Size (n, 1).
+    B_norm = torch.linalg.norm(B, dim=0, keepdim=True)  # Size (1, b).
+    cosine_similarity = ((Z @ B) / (Z_norm @ B_norm)).T
+    return cosine_similarity
+
+def prenormed_batchwise_cosine_similarity(Z,B):
+    return (Z @ B.T).T
+
+def torch_to_Image(x):
+    if x.ndim==4:
+        x=x[0]
+    return transforms.ToPILImage()(x)
+
+def save_ckpt(model,outdir,accelerator,tag="last"):
+    ckpt_path = outdir+f'/{tag}'
+    os.makedirs(ckpt_path,exist_ok=True)
+    accelerator.save_model(model, ckpt_path, max_shard_size="2GB", safe_serialization=True)
+    if accelerator.is_main_process:
+        print(f"\n---saved {ckpt_path}!---\n")

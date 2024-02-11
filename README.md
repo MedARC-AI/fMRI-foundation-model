@@ -2,7 +2,7 @@
 
 In-progress -- this repo is under active development in the MedARC discord server. https://medarc.ai/fmri
 
-1. Download all of https://huggingface.co/datasets/pscotti/fmrifoundation and place them in a folder. You will need to specify the path to this folder in the code.
+1. Download contents of https://huggingface.co/datasets/pscotti/fmrifoundation and place them in a folder. You will need to specify the paths to this folder in the code.
 
 ```
 from huggingface_hub import snapshot_download

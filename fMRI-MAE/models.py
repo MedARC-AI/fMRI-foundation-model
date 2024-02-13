@@ -175,8 +175,6 @@ class SimpleViT(nn.Module):
         depth,
         heads,
         mlp_dim,
-        num_encoder_patches,
-        num_decoder_patches,
         channels,
         dim_head=64,
         use_rope_emb: bool = False,

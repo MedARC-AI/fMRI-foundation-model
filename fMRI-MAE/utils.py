@@ -238,10 +238,3 @@ def torch_to_Image(x):
     if x.ndim==4:
         x=x[0]
     return transforms.ToPILImage()(x)
-
-def save_ckpt(model,outdir,accelerator,tag="last"):
-    ckpt_path = outdir+f'/{tag}'
-    os.makedirs(ckpt_path,exist_ok=True)
-    accelerator.save_model(model, ckpt_path, max_shard_size="2GB", safe_serialization=True)
-    if accelerator.is_main_process:
-        print(f"\n---saved {ckpt_path}!---\n")

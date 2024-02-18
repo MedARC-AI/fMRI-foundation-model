@@ -295,7 +295,8 @@ class SimpleViT(nn.Module):
         else:  # DECODER
             if verbose: print(x.shape)
             x = self.encoder_to_decoder(x)
-            B, N, _ = x.shape
+            B, _, _ = x.shape
+            N = decoder_mask.sum()
             mask = None
             if not self.use_rope_emb:
                 if verbose: print(x.shape)
@@ -309,9 +310,7 @@ class SimpleViT(nn.Module):
                     cls_tokens = x[:,:1,:]
                     x = x[:,1:,:]
                 x = torch.cat([x + pos_emd_encoder, 
-                               self.mask_token.repeat(B, 
-                               N-1 if self.use_cls_token else N, 1) 
-                               + pos_emd_decoder], 
+                               self.mask_token.repeat(B, N, 1) + pos_emd_decoder], 
                               dim=1)
                 if self.use_cls_token:
                     x = torch.cat([cls_tokens, x], dim=1)

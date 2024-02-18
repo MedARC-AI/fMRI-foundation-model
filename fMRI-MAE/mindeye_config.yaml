@@ -1,21 +1,21 @@
 # Model Config
-model_name: "ME_testing"
-mae_model_name: "testing"
+model_name: "ME_patch8_60ep_nopretrain"
+mae_model_name: "patch8"
 
 # Training Configs
 global_batch_size: 64
 num_workers: 8
 mixed_precision: "fp16"
-num_epochs: 12
+num_epochs: 60
 seed: 42
 max_lr: 3.0e-4 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 512
 
 # Saving progress
 ckpt_saving: True
-ckpt_interval: 5
+ckpt_interval: 99
 resume_from_ckpt: False
-wandb_log: False
+wandb_log: True
 
 # Model Config
 in_dim: 409600

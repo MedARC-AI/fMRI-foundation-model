@@ -1,13 +1,13 @@
 # Model Config
-model_name: "patch8_base1"
+model_name: "patch8_100eps_4gpu_accelerate_b"
 use_cls_token: False
 use_contrastive_loss: False
 constrastive_loss_weight: 1.0
 
 # Training Configs
-global_batch_size: 16
-num_workers: 8
-num_epochs: 30
+global_batch_size: 8
+num_workers: 4
+num_epochs: 100
 seed: 42
 max_lr: 3.0e-5 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 1024
@@ -15,7 +15,7 @@ cache_dir: "cache/"
 
 # Saving progress
 ckpt_saving: True
-ckpt_interval: 20
+ckpt_interval: 50
 resume_from_ckpt: False
 wandb_log: True
 

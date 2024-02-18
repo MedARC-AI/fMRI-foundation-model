@@ -299,7 +299,6 @@ class SimpleViT(nn.Module):
             N = decoder_mask.sum()
             mask = None
             if not self.use_rope_emb:
-                if verbose: print(x.shape)
                 pos_embed = self.posemb_sincos_4d.to(x.device)
                 if verbose: print("pe", pos_embed.shape)
                 pos_emd_encoder = pos_embed[encoder_mask]

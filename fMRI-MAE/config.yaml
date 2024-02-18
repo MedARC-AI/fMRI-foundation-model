@@ -1,5 +1,5 @@
 # Model Config
-model_name: "patch8"
+model_name: "patch8_base1"
 use_cls_token: False
 use_contrastive_loss: False
 constrastive_loss_weight: 1.0
@@ -15,12 +15,13 @@ cache_dir: "cache/"
 
 # Saving progress
 ckpt_saving: True
-ckpt_interval: 50
+ckpt_interval: 20
 resume_from_ckpt: False
 wandb_log: True
 
 # MAE Config
-tube_mask_ratio: 0.75
+tube_start_masking_ratio: 0.75
+tube_end_masking_ratio: 0.75
 decoder_mask_ratio: 0.75
 
 # Model Config

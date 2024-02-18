@@ -238,3 +238,7 @@ def torch_to_Image(x):
     if x.ndim==4:
         x=x[0]
     return transforms.ToPILImage()(x)
+
+def get_masking_ratio(current_epoch, total_epochs, start_masking_ratio, end_masking_ratio):
+    """Returns the masking ratio for the current epochs. Linearly increase the masking ratio over the span of the training"""
+    return start_masking_ratio + (end_masking_ratio-start_masking_ratio) * ((current_epoch+1)/total_epochs)

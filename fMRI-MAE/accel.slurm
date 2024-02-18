@@ -11,13 +11,11 @@
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
+export NUM_GPUS=4  # Set to equal gres=gpu:#!
+
 source ~/.bashrc
 cd /weka/proj-fmri/paulscotti/fMRI-foundation-model/fMRI-MAE/
 jupyter nbconvert main.ipynb --to python
-
-export NUM_GPUS=4  # Set to equal gres=gpu:#!
-export BATCH_SIZE=4
-export GLOBAL_BATCH_SIZE=$((BATCH_SIZE * NUM_GPUS))
 
 # Make sure another job doesnt use same port, here using random number
 export MASTER_PORT=$((RANDOM % (19000 - 11000 + 1) + 11000)) 
@@ -28,24 +26,5 @@ echo MASTER_ADDR=${MASTER_ADDR}
 echo MASTER_PORT=${MASTER_PORT}
 echo WORLD_SIZE=${COUNT_NODE}
 
-model_name="mae_testing"
-echo model_name=${model_name}
-accelerate launch --num_processes=$(($NUM_GPUS * $COUNT_NODE)) --num_machines=$COUNT_NODE --main_process_ip=$MASTER_ADDR --main_process_port=$MASTER_PORT --mixed_precision=fp16 main.py \
---model_name=${model_name} \
---train_urls=s3://proj-fmri/fmri_foundation_datasets/openneuro/{000000..000664}.tar \
---test_urls=/weka/proj-fmri/paulscotti/fMRI-foundation-model/dataset_creation/nsd_minimal/sub-01/{000000..000010}.tar \
---batch_size=${BATCH_SIZE} \
---num_epochs=30 \
---use_contrastive_loss \
---constrastive_loss_weight=1.0 \
---num_samples_per_epoch=512 \
---tube_mask_ratio=0.75 \
---decoder_mask_ratio=0.75 \
---num_frames=4 \
---tubelet_size=1 \
---patch_size=8 \
---frame_patch_size=1 \
---max_lr=3e-5 \
---seed=42 \
---wandb_log \
---ckpt_saving
+accelerate launch --num_processes=$(($NUM_GPUS * $COUNT_NODE)) --num_machines=$COUNT_NODE --main_process_ip=$MASTER_ADDR --main_process_port=$MASTER_PORT --mixed_precision=fp16 main.py
+# srun python main.py

@@ -7,13 +7,6 @@ from einops import rearrange
 from einops.layers.torch import Rearrange
 from rope import RotaryPositionalEmbeddings4D
 
-vit_mapping = {
-    "vit_small": vit_small,
-    "vit_base": vit_base,
-    "vit_large": vit_large,
-    "vit_huge": vit_huge
-}
-
 def my_split_by_node(urls): return urls
 
 def posemb_sincos_4d(patches, temperature=10000, dtype=torch.float32):
@@ -366,6 +359,13 @@ def vit_huge(**args):
         mlp_dim=5120,
         **args
     )
+
+vit_mapping = {
+    "vit_small": vit_small,
+    "vit_base": vit_base,
+    "vit_large": vit_large,
+    "vit_huge": vit_huge
+}
 
 def get_vit(size, **args):
     return vit_mapping[size](**args)

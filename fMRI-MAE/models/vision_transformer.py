@@ -7,6 +7,13 @@ from einops import rearrange
 from einops.layers.torch import Rearrange
 from rope import RotaryPositionalEmbeddings4D
 
+vit_mapping = {
+    "vit_small": vit_small,
+    "vit_base": vit_base,
+    "vit_large": vit_large,
+    "vit_huge": vit_huge
+}
+
 def my_split_by_node(urls): return urls
 
 def posemb_sincos_4d(patches, temperature=10000, dtype=torch.float32):
@@ -163,7 +170,7 @@ class Transformer(nn.Module):
         return self.norm(x)
 
 
-class SimpleViT(nn.Module):
+class VisionTransformer(nn.Module):
     def __init__(
         self,
         *,
@@ -175,7 +182,7 @@ class SimpleViT(nn.Module):
         depth,
         heads,
         mlp_dim,
-        channels,
+        channels=1,
         dim_head=64,
         use_rope_emb: bool = False,
         use_cls_token: bool = False
@@ -323,3 +330,43 @@ class SimpleViT(nn.Module):
             x = self.decoder_proj(x)
             if verbose: print("proj", x.shape)
         return x
+
+def vit_small(**args):
+    return VisionTransformer(
+        dim=384,
+        depth=12,
+        heads=6,
+        mlp_dim=1_536,
+        **args
+    )
+
+def vit_base(**args):
+    return VisionTransformer(
+        dim=768,
+        depth=12,
+        heads=12,
+        mlp_dim=3_072,
+        **args
+    )    
+
+def vit_large(**args):
+    return VisionTransformer(
+        dim=1024,
+        depth=24,
+        heads=16,
+        mlp_dim=4_096,
+        **args
+    )
+
+def vit_huge(**args):
+    return VisionTransformer(
+        dim=1280,
+        depth=32,
+        heads=16,
+        mlp_dim=5120,
+        **args
+    )
+
+def get_vit(size, **args):
+    return vit_mapping[size](**args)
+

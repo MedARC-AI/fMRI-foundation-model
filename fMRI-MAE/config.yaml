@@ -25,10 +25,7 @@ tube_end_masking_ratio: 0.75
 decoder_mask_ratio: 0.75
 
 # Model Config
-depth: 12
-heads: 12
-dim: 512
-mlp_dim: 512
+vit_size: "vit_base"
 patch_size: 8
 frame_patch_size: 1
 use_rope_emb: False

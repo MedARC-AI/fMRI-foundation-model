@@ -16,6 +16,7 @@ def is_interactive():
 
     return not hasattr(main, "__file__")
 
+def my_split_by_node(urls): return urls
 
 def seed_everything(seed=0, cudnn_deterministic=True):
     random.seed(seed)

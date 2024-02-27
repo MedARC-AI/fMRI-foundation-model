@@ -7,8 +7,6 @@ from einops import rearrange
 from einops.layers.torch import Rearrange
 from rope import RotaryPositionalEmbeddings4D
 
-def my_split_by_node(urls): return urls
-
 def posemb_sincos_4d(patches, temperature=10000, dtype=torch.float32):
     _, f, d, h, w, dim, device, dtype = (*patches.shape, patches.device, patches.dtype)
 

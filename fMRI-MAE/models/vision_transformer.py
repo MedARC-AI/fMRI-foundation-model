@@ -7,8 +7,6 @@ from einops import rearrange
 from einops.layers.torch import Rearrange
 from rope import RotaryPositionalEmbeddings4D
 
-def my_split_by_node(urls): return urls
-
 def posemb_sincos_4d(patches, temperature=10000, dtype=torch.float32):
     _, f, d, h, w, dim, device, dtype = (*patches.shape, patches.device, patches.dtype)
 
@@ -35,13 +33,13 @@ def posemb_sincos_4d(patches, temperature=10000, dtype=torch.float32):
 
 
 class FeedForward(nn.Module):
-    def __init__(self, dim, hidden_dim):
+    def __init__(self, embed_dim, hidden_dim):
         super().__init__()
         self.net = nn.Sequential(
-            nn.LayerNorm(dim),
-            nn.Linear(dim, hidden_dim),
+            nn.LayerNorm(embed_dim),
+            nn.Linear(embed_dim, hidden_dim),
             nn.GELU(),
-            nn.Linear(hidden_dim, dim),
+            nn.Linear(hidden_dim, embed_dim),
         )
 
     def forward(self, x):
@@ -51,24 +49,24 @@ class FeedForward(nn.Module):
 class Attention(nn.Module):
     def __init__(
         self,
-        dim: int,
-        heads: int = 8,
+        embed_dim: int,
+        num_heads: int = 8,
         dim_head: int = 64,
         use_rope: bool = False,
         cls_token: bool = False,
     ):
         super().__init__()
-        inner_dim = dim_head * heads
-        self.heads = heads
+        inner_dim = dim_head * num_heads
+        self.num_heads = num_heads
         self.scale = dim_head**-0.5
         self.use_rope = use_rope
         self.cls_token = cls_token
-        self.norm = nn.LayerNorm(dim)
+        self.norm = nn.LayerNorm(embed_dim)
 
         self.attend = nn.Softmax(dim=-1)
 
-        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias=False)
-        self.to_out = nn.Linear(inner_dim, dim, bias=False)
+        self.to_qkv = nn.Linear(embed_dim, inner_dim * 3, bias=False)
+        self.to_out = nn.Linear(inner_dim, embed_dim, bias=False)
 
     def forward(
         self,
@@ -79,7 +77,7 @@ class Attention(nn.Module):
         x = self.norm(x)
 
         qkv = self.to_qkv(x).chunk(3, dim=-1)
-        q, k, v = map(lambda t: rearrange(t, "b n (h d) -> b h n d", h=self.heads), qkv)
+        q, k, v = map(lambda t: rearrange(t, "b n (h d) -> b h n d", h=self.num_heads), qkv)
         if self.use_rope:
             if pos_embed is None:
                 raise ValueError(
@@ -110,9 +108,9 @@ class Attention(nn.Module):
 class Transformer(nn.Module):
     def __init__(
         self,
-        dim: int,
+        embed_dim: int,
         depth: int,
-        heads: int,
+        num_heads: int,
         dim_head: int,
         mlp_dim: int,
         use_rope: bool = False,
@@ -121,22 +119,24 @@ class Transformer(nn.Module):
         grid_depth: Optional[int] = None,
         grid_time: Optional[int] = None,
         cls_token: bool = False,
+        **args,
     ):
         super().__init__()
-        self.norm = nn.LayerNorm(dim)
+        self.embed_dim = embed_dim
+        self.norm = nn.LayerNorm(embed_dim)
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(
                 nn.ModuleList(
                     [
                         Attention(
-                            dim,
-                            heads=heads,
+                            embed_dim,
+                            num_heads=num_heads,
                             dim_head=dim_head,
                             use_rope=use_rope,
                             cls_token=cls_token,
                         ),
-                        FeedForward(dim, mlp_dim),
+                        FeedForward(embed_dim, mlp_dim),
                     ]
                 )
             )
@@ -163,26 +163,27 @@ class Transformer(nn.Module):
         return self.norm(x)
 
 
-class VisionTransformer(nn.Module):
+class VisionTransformerMAE(nn.Module):
     def __init__(
         self,
         *,
+        encoder,
+        decoder,
         image_size,
         image_patch_size,
         frames,
         frame_patch_size,
-        dim,
-        depth,
-        heads,
-        mlp_dim,
         channels=1,
-        dim_head=64,
         use_rope_emb: bool = False,
-        use_cls_token: bool = False
+        use_cls_token: bool = False,
+        **args,
     ):
         super().__init__()
         image_depth, image_height, image_width = image_size
         patch_depth, patch_height, patch_width = image_patch_size
+
+        self.encoder_transformer = encoder
+        self.decoder_transformer = decoder
 
         # Check divisibility
         assert (image_depth % patch_depth == 0 and image_height % patch_height == 0 and image_width % 
@@ -212,63 +213,49 @@ class VisionTransformer(nn.Module):
                 pf=frame_patch_size,
             )
         )
+        self.encoder_embed_dim = self.encoder_transformer.embed_dim
+        self.decoder_embed_dim = self.decoder_transformer.embed_dim
 
         self.patch_to_emb = nn.Sequential(
             nn.LayerNorm(self.patch_dim),
-            nn.Linear(self.patch_dim, dim),
-            nn.LayerNorm(dim),
-        )
-
-        self.encoder_transformer = Transformer(
-            dim,
-            depth,
-            heads,
-            dim_head,
-            mlp_dim,
-            use_rope=use_rope_emb,
-            grid_time=frames // frame_patch_size,
-            grid_depth=image_depth // patch_depth,
-            grid_height=image_height // patch_height,
-            grid_width=image_width // patch_width,
-            cls_token=use_cls_token,
-        )
-        self.decoder_transformer = Transformer(
-            dim,
-            depth,
-            heads,
-            dim_head,
-            mlp_dim,
-            use_rope=use_rope_emb,
-            grid_time=frames // frame_patch_size,
-            grid_depth=image_depth // patch_depth,
-            grid_height=image_height // patch_height,
-            grid_width=image_width // patch_width,
-            cls_token=use_cls_token,
+            nn.Linear(self.patch_dim, self.encoder_embed_dim),
+            nn.LayerNorm(self.encoder_embed_dim),
         )
 
         self.use_rope_emb = use_rope_emb
         if not self.use_rope_emb:
-            self.posemb_sincos_4d = posemb_sincos_4d(
+            self.encoder_posemb_sincos_4d = posemb_sincos_4d(
                 torch.zeros(
                     1,
                     frames,
                     image_depth // patch_depth,
                     image_height // patch_height,
                     image_width // patch_width,
-                    dim,
+                    self.encoder_embed_dim,
+                )
+            )
+            self.decoder_posemb_sincos_4d = posemb_sincos_4d(
+                torch.zeros(
+                    1,
+                    frames,
+                    image_depth // patch_depth,
+                    image_height // patch_height,
+                    image_width // patch_width,
+                    self.decoder_embed_dim,
                 )
             )
 
-        self.encoder_to_decoder = nn.Linear(dim, mlp_dim, bias=False)
-        self.mask_token = nn.Parameter(torch.zeros(1, 1, mlp_dim))
+        self.encoder_to_decoder = nn.Linear(self.encoder_embed_dim, self.decoder_embed_dim, bias=False)
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, self.decoder_embed_dim))
+
         # cls token
         self.use_cls_token = use_cls_token
         if use_cls_token:
-            self.cls_token = nn.Parameter(torch.zeros(1, 1, mlp_dim))
+            self.cls_token = nn.Parameter(torch.zeros(1, 1, self.encoder_embed_dim))
         self.decoder_proj = nn.Sequential(
-                                nn.LayerNorm(mlp_dim), 
+                                nn.LayerNorm(self.decoder_embed_dim), 
                                 nn.GELU(), 
-                                nn.Linear(mlp_dim, self.patch_dim)
+                                nn.Linear(self.decoder_embed_dim, self.patch_dim)
                             )
 
     def forward(self, x, encoder_mask=None, decoder_mask=None, verbose=False):
@@ -282,8 +269,8 @@ class VisionTransformer(nn.Module):
             x = rearrange(x, "b ... d -> b (...) d")
             if verbose: print(x.shape)
             if not self.use_rope_emb:
-                if verbose: print("pe", self.posemb_sincos_4d.shape)
-                x = x + self.posemb_sincos_4d.to(x.device)
+                if verbose: print("pe", self.encoder_posemb_sincos_4d.shape)
+                x = x + self.encoder_posemb_sincos_4d.to(x.device)
             if verbose: print("x", x.shape)
             x = x[:, encoder_mask]
             if self.use_cls_token:
@@ -299,7 +286,7 @@ class VisionTransformer(nn.Module):
             N = decoder_mask.sum()
             mask = None
             if not self.use_rope_emb:
-                pos_embed = self.posemb_sincos_4d.to(x.device)
+                pos_embed = self.decoder_posemb_sincos_4d.to(x.device)
                 if verbose: print("pe", pos_embed.shape)
                 pos_emd_encoder = pos_embed[encoder_mask]
                 pos_emd_decoder = pos_embed[decoder_mask]
@@ -324,49 +311,54 @@ class VisionTransformer(nn.Module):
             if verbose: print("proj", x.shape)
         return x
 
-def vit_small(**args):
-    return VisionTransformer(
-        dim=384,
+def transformer_small(**args):
+    return Transformer(
+        embed_dim=384,
         depth=12,
-        heads=6,
+        num_heads=6,
         mlp_dim=1_536,
+        dim_head=64,
         **args
     )
 
-def vit_base(**args):
-    return VisionTransformer(
-        dim=768,
+def transformer_base(**args):
+    return Transformer(
+        embed_dim=768,
         depth=12,
-        heads=12,
+        num_heads=12,
         mlp_dim=3_072,
+        dim_head=64,
         **args
     )    
 
-def vit_large(**args):
-    return VisionTransformer(
-        dim=1024,
+def transformer_large(**args):
+    return Transformer(
+        embed_dim=1024,
         depth=24,
-        heads=16,
+        num_heads=16,
         mlp_dim=4_096,
+        dim_head=64,
         **args
     )
 
-def vit_huge(**args):
-    return VisionTransformer(
-        dim=1280,
+def transformer_huge(**args):
+    return Transformer(
+        embed_dim=1280,
         depth=32,
-        heads=16,
-        mlp_dim=5120,
+        num_heads=16,
+        mlp_dim=5_120,
+        dim_head=64,
         **args
     )
 
-vit_mapping = {
-    "vit_small": vit_small,
-    "vit_base": vit_base,
-    "vit_large": vit_large,
-    "vit_huge": vit_huge
+transformer_mapping = {
+    "vit_small": transformer_small,
+    "vit_base": transformer_base,
+    "vit_large": transformer_large,
+    "vit_huge": transformer_huge
 }
 
 def get_vit(size, **args):
-    return vit_mapping[size](**args)
-
+    encoder = transformer_mapping[size["encoder"]](**args)
+    decoder = transformer_mapping[size["decoder"]](**args)
+    return VisionTransformerMAE(encoder=encoder, decoder=decoder, **args) 

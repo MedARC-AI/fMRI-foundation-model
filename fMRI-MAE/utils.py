@@ -11,6 +11,8 @@ from torchvision import transforms
 import nibabel as nib
 
 
+def my_split_by_node(urls): return urls
+
 def is_interactive():
     import __main__ as main
 

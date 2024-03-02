@@ -25,7 +25,8 @@ tube_end_masking_ratio: 0.75
 decoder_mask_ratio: 0.75
 
 # Model Config
-vit_size: "vit_base"
+encoder_model: "vit_base"
+decoder_model: "vit_small"
 patch_size: 8
 frame_patch_size: 1
 use_rope_emb: False

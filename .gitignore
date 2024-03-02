@@ -1,0 +1,6 @@
+fmri
+cache
+data
+**/__pycache__/
+**/cache/
+**/ckpts/

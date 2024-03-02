@@ -13,8 +13,9 @@ import webdataset as wds
 
 sys.path.append('/mnt/c/Users/Moham/Desktop/fMRI-foundation-model')
 
-from fMRI_MAE.utils import *
-from fMRI_MAE.data import *
+from MAE.utils import *
+from datasets import *
+import datasets.utils as dutils
 
 from logging import getLogger
 
@@ -53,23 +54,27 @@ def make_fmridataset(
     duration=None,
     log_dir=None,
 ):  
+    data_paths = data_paths[0]
+    data_paths_tars = [data_paths + os.sep + folder for folder in os.listdir(data_paths) if ".tar" in folder]
+    num_samples_per_epoch = dutils.count_num_samples(data_paths)
+
     aug_transform = utils.DataPrepper(
         masking_strategy="conservative",
         patch_depth=8,
         patch_height=8,
         patch_width=8,
         frame_patch_size=1,
-        num_timepoints=12
+        num_timepoints=20
     )
 
-    train_data = wds.WebDataset(data_paths, resampled=False, cache_dir=cache_dir, handler=log_and_continue).select(filter_corrupted_images).rename(key="__key__",
+    train_data = wds.WebDataset(data_paths_tars, resampled=False, cache_dir=cache_dir, handler=log_and_continue).select(filter_corrupted_images).rename(key="__key__",
     func="func.png",
     header="header.npy",
     dataset="dataset.txt",
     minmax="minmax.npy",
     meansd="meansd.png").map_dict(func=utils.grayscale_decoder,
     meansd=utils.grayscale_decoder,
-    minmax=utils.numpy_decoder).map(aug_transform).to_tuple(*("func", "minmax", "meansd")).with_epoch(num_samples_per_epoch)
+    minmax=utils.numpy_decoder).to_tuple(*("func", "minmax", "meansd")).map(aug_transform).with_epoch(num_samples_per_epoch)
 
     train_dl = wds.WebLoader(
         train_data.batched(batch_size), 
@@ -77,8 +82,9 @@ def make_fmridataset(
         shuffle=False,
         batch_size=None,
         num_workers=num_workers, 
+        collate_fn=collator,
         persistent_workers=num_workers>0,
-    ).with_epoch(num_samples_per_epoch//batch_size)
+    ).with_epoch(num_samples_per_epoch//batch_size).with_length(num_samples_per_epoch)
 
     return train_data, train_dl, None
     

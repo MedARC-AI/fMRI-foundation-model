@@ -239,14 +239,15 @@ def main(args, resume_preempt=False):
             tubelet_size=tubelet_size,
             cfgs_mask=cfgs_mask)
         
-    transform = make_transforms(
-        random_horizontal_flip=True,
-        random_resize_aspect_ratio=ar_range,
-        random_resize_scale=rr_scale,
-        reprob=reprob,
-        auto_augment=use_aa,
-        motion_shift=motion_shift,
-        crop_size=crop_size)
+    # transform = make_transforms(
+    #     random_horizontal_flip=True,
+    #     random_resize_aspect_ratio=ar_range,
+    #     random_resize_scale=rr_scale,
+    #     reprob=reprob,
+    #     auto_augment=use_aa,
+    #     motion_shift=motion_shift,
+    #     crop_size=crop_size)
+    transform = None
 
     # -- init data-loaders/samplers
     (unsupervised_loader,
@@ -390,6 +391,11 @@ def main(args, resume_preempt=False):
                 udata, masks_enc, masks_pred = next(loader)
             assert len(masks_enc) == len(masks_pred), \
                 'Currently require num encoder masks = num predictor masks'
+            
+
+            print(udata.shape)
+            print(masks_enc.shape)
+            print(masks_pred.shape)
 
             def load_clips():
                 # -- unsupervised video clips

@@ -4,11 +4,11 @@ tasks_per_node: 1
 data:
   dataset_type: FMRIDataset
   datasets:
-    - "/mnt/c/Users/Moham/Desktop/fMRI-foundation-model/data/wds/000000.tar"
+    - "/mnt/c/Users/Moham/Desktop/fMRI-foundation-model/data/wds"
   decode_one_clip: true
-  batch_size: 1
+  batch_size: 2
   num_clips: 1
-  num_frames: 48
+  num_frames: 20
   tubelet_size: 2
   sampling_rate: 4
   crop_size: 64
@@ -64,7 +64,7 @@ meta:
   seed: 234
   eval_freq: 100
   use_sdpa: true
-  dtype: bfloat16
+  dtype: float16
 model:
   model_name: vit_tiny
   pred_depth: 12

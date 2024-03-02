@@ -1,15 +1,15 @@
 app: vjepa
 data:
-  batch_size: 1
+  batch_size: 2
   clip_duration: null
   crop_size: 64
   dataset_type: FMRIDataset
   datasets:
-  - /mnt/c/Users/Moham/Desktop/fMRI-foundation-model/data/wds/000000.tar
+  - /mnt/c/Users/Moham/Desktop/fMRI-foundation-model/data/wds
   decode_one_clip: true
   filter_short_videos: false
   num_clips: 1
-  num_frames: 48
+  num_frames: 20
   num_workers: 1
   patch_size: 8
   pin_mem: true
@@ -57,7 +57,7 @@ mask:
   - 1.0
   - 1.0
 meta:
-  dtype: bfloat16
+  dtype: float16
   eval_freq: 100
   load_checkpoint: false
   read_checkpoint: null

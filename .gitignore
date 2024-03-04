@@ -6,3 +6,5 @@ test_notebook.ipynb
 **/__pycache__/
 ckpts
 log
+
+tmp

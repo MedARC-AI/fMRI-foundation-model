@@ -51,9 +51,9 @@ class MaskCollator(object):
 
     def __call__(self, batch):
 
+        batch = (batch[0]) # get func
         batch_size = len(batch)
-        print("batch", batch_size)
-        collated_batch = torch.utils.data.default_collate(batch)
+        # collated_batch = torch.utils.data.default_collate(batch) # already collated
 
         collated_masks_pred, collated_masks_enc = [], []
         for i, mask_generator in enumerate(self.mask_generators):
@@ -61,7 +61,7 @@ class MaskCollator(object):
             collated_masks_enc.append(masks_enc)
             collated_masks_pred.append(masks_pred)
 
-        return collated_batch, collated_masks_enc, collated_masks_pred
+        return batch, collated_masks_enc, collated_masks_pred
 
 
 class _MaskGenerator(object):

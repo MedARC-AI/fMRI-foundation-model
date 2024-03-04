@@ -64,27 +64,36 @@ def make_fmridataset(
         patch_height=8,
         patch_width=8,
         frame_patch_size=1,
-        num_timepoints=20
+        num_timepoints=4
     )
 
-    train_data = wds.WebDataset(data_paths_tars, resampled=False, cache_dir=cache_dir, handler=log_and_continue).select(filter_corrupted_images).rename(key="__key__",
-    func="func.png",
-    header="header.npy",
-    dataset="dataset.txt",
-    minmax="minmax.npy",
-    meansd="meansd.png").map_dict(func=utils.grayscale_decoder,
-    meansd=utils.grayscale_decoder,
-    minmax=utils.numpy_decoder).to_tuple(*("func", "minmax", "meansd")).map(aug_transform).with_epoch(num_samples_per_epoch)
+    train_data = (wds.WebDataset(data_paths_tars, resampled=False, nodesplitter=dutils.my_split_by_node, cache_dir=cache_dir, handler=log_and_continue)
+    .select(filter_corrupted_images)
+    .rename(
+        key="__key__", 
+        func="func.png",
+        header="header.npy",
+        dataset="dataset.txt",
+        minmax="minmax.npy",
+        meansd="meansd.png")
+    .map_dict(
+        func=dutils.grayscale_decoder,
+        meansd=dutils.grayscale_decoder,
+        minmax=dutils.numpy_decoder)
+    .to_tuple(*("func", "minmax", "meansd"))
+    .map(aug_transform)
+    .with_epoch(num_samples_per_epoch))
 
-    train_dl = wds.WebLoader(
+    train_dl = (wds.WebLoader(
         train_data.batched(batch_size), 
         pin_memory=True,
         shuffle=False,
         batch_size=None,
         num_workers=num_workers, 
-        collate_fn=collator,
         persistent_workers=num_workers>0,
-    ).with_epoch(num_samples_per_epoch//batch_size).with_length(num_samples_per_epoch)
+        collate_fn=collator,
+        )
+        .with_epoch(num_samples_per_epoch//batch_size).with_length(num_samples_per_epoch//batch_size))
 
     return train_data, train_dl, None
     

@@ -391,17 +391,13 @@ def main(args, resume_preempt=False):
                 udata, masks_enc, masks_pred = next(loader)
             assert len(masks_enc) == len(masks_pred), \
                 'Currently require num encoder masks = num predictor masks'
-            
-
-            print(udata.shape)
-            print(masks_enc.shape)
-            print(masks_pred.shape)
-
+        
             def load_clips():
                 # -- unsupervised video clips
                 # Put each clip on the GPU and concatenate along batch
                 # dimension
-                clips = torch.cat([u.to(device, non_blocking=True) for u in udata[0]], dim=0)
+                # clips = torch.cat([u.to(device, non_blocking=True) for u in udata[0]], dim=0)
+                clips = udata.to(device, non_blocking=True)
 
                 # Put each mask-enc/mask-pred pair on the GPU and reuse the
                 # same mask pair for each clip

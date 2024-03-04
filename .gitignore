@@ -2,3 +2,7 @@ data
 cache
 fmri
 *venv*
+test_notebook.ipynb
+**/__pycache__/
+ckpts
+log

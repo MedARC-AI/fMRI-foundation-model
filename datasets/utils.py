@@ -8,6 +8,9 @@ from einops import rearrange
 from PIL import Image
 from io import BytesIO
 
+def my_split_by_node(urls):
+    return urls
+
 def count_num_samples(root, is_tar=True):
     unique_samples = set()  # To hold unique base names of samples
     count = 0
@@ -136,7 +139,6 @@ class DataPrepper:
             frame_patch_size=self.frame_patch_size,
             masking_strategy=self.masking_strategy,
         )
-        func = func.permute(0, -1, 1, 2).contiguous()
-        meansd = meansd.permute(0, -1, 1, 2).contiguous()
-        # return func, meansd, pos_patches
-        return func
+        func = func.permute(0, -1, 1, 2)
+        meansd = meansd.permute(0, -1, 1, 2)
+        return func, meansd, pos_patches

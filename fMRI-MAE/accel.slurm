@@ -3,7 +3,7 @@
 #SBATCH --partition=a40x
 #SBATCH --job-name=mae
 #SBATCH --nodes=1              
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:1
 #SBATCH --time=20:00:00         # total run time limit (HH:MM:SS)
 #SBATCH -e slurms/%j.err        # first create a "slurms" folder in current directory to store logs
 #SBATCH -o slurms/%j.out
@@ -11,9 +11,11 @@
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
-export NUM_GPUS=4  # Set to equal gres=gpu:#!
+export NUM_GPUS=1  # Set to equal gres=gpu:#!
 
 source ~/.bashrc
+deactivate
+source ~/found2/bin/activate
 cd /weka/proj-fmri/paulscotti/fMRI-foundation-model/fMRI-MAE/
 jupyter nbconvert main.ipynb --to python
 
@@ -26,5 +28,4 @@ echo MASTER_ADDR=${MASTER_ADDR}
 echo MASTER_PORT=${MASTER_PORT}
 echo WORLD_SIZE=${COUNT_NODE}
 
-accelerate launch --num_processes=$(($NUM_GPUS * $COUNT_NODE)) --num_machines=$COUNT_NODE --main_process_ip=$MASTER_ADDR --main_process_port=$MASTER_PORT --mixed_precision=fp16 main.py
-# srun python main.py
+srun python main.py

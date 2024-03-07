@@ -10,6 +10,6 @@ snapshot_download(repo_id="pscotti/fmrifoundation", repo_type = "dataset", revis
     local_dir= "your_local_dir", local_dir_use_symlinks = False, resume_download = True)
 ```
 
-2. Run setup.sh to create a new "fmri" virtual environment
+2. Run setup.sh to create a new "found" virtual environment
 
-3. Activate the virtual environment with "source fmri/bin/activate"
+3. Activate the virtual environment with "source found/bin/activate"

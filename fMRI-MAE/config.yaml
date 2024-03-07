@@ -34,7 +34,7 @@ masking_strategy: "MNI"
 # Data Config
 img_size: [88, 104, 72] # Image Size
 num_frames: 4
-# train_urls: "s3://proj-fmri/fmri_foundation_datasets/openneuro_MNI_wds/{000001..000033}.tar"
-# test_urls: "s3://proj-fmri/fmri_foundation_datasets/openneuro_MNI_wds/000000.tar"
-train_urls: "/weka/proj-fmri/paulscotti/old_fMRI-foundation-model/dataset_creation/wds_creation/wds/{000001..000240}.tar"
-test_urls: "/weka/proj-fmri/paulscotti/old_fMRI-foundation-model/dataset_creation/wds_creation/wds/000000.tar"
+train_urls: "s3://proj-fmri/fmri_foundation_datasets/openneuro_MNI_wds/{000001..000033}.tar"
+test_urls: "s3://proj-fmri/fmri_foundation_datasets/openneuro_MNI_wds/000000.tar"
+# train_urls: "/weka/proj-fmri/paulscotti/old_fMRI-foundation-model/dataset_creation/wds_creation/wds/{000001..000240}.tar"
+# test_urls: "/weka/proj-fmri/paulscotti/old_fMRI-foundation-model/dataset_creation/wds_creation/wds/000000.tar"

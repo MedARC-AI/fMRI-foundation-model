@@ -13,9 +13,8 @@
 
 export NUM_GPUS=1  # Set to equal gres=gpu:#!
 
+# make sure your .bashrc is activating the intended venv!
 source ~/.bashrc
-deactivate
-source ~/found2/bin/activate
 cd /weka/proj-fmri/paulscotti/fMRI-foundation-model/fMRI-MAE/
 jupyter nbconvert main.ipynb --to python
 

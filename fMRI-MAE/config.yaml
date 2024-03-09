@@ -30,6 +30,7 @@ decoder_model: "vit_small"
 patch_size: 8
 frame_patch_size: 1
 use_rope_emb: False
+use_4d_conv: False
 
 # Data Config
 img_size: [64, 64, 48] # Image Size

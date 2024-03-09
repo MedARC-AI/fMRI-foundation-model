@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from einops.layers.torch import Rearrange
 from rope import RotaryPositionalEmbeddings4D
+from .utils import Conv4d
 
 def posemb_sincos_4d(patches, temperature=10000, dtype=torch.float32):
     _, f, d, h, w, dim, device, dtype = (*patches.shape, patches.device, patches.dtype)
@@ -176,12 +177,14 @@ class VisionTransformerMAE(nn.Module):
         channels=1,
         use_rope_emb: bool = False,
         use_cls_token: bool = False,
+        use_4d_conv: bool = False,
         **args,
     ):
         super().__init__()
         image_depth, image_height, image_width = image_size
         patch_depth, patch_height, patch_width = image_patch_size
 
+        self.use_4d_conv = use_4d_conv
         self.encoder_transformer = encoder
         self.decoder_transformer = decoder
 
@@ -216,11 +219,17 @@ class VisionTransformerMAE(nn.Module):
         self.encoder_embed_dim = self.encoder_transformer.embed_dim
         self.decoder_embed_dim = self.decoder_transformer.embed_dim
 
-        self.patch_to_emb = nn.Sequential(
-            nn.LayerNorm(self.patch_dim),
-            nn.Linear(self.patch_dim, self.encoder_embed_dim),
-            nn.LayerNorm(self.encoder_embed_dim),
-        )
+        if self.use_4d_conv:
+            self.patch_to_emb = nn.Sequential(
+                Conv4d(in_channels=channels, out_channels=768, kernel_size=(frame_patch_size, patch_height, patch_width, patch_depth),
+                    stride=(frame_patch_size, patch_height, patch_width, patch_depth)).cuda()
+            ) 
+        else:
+            self.patch_to_emb = nn.Sequential(
+                nn.LayerNorm(self.patch_dim),
+                nn.Linear(self.patch_dim, self.encoder_embed_dim),
+                nn.LayerNorm(self.encoder_embed_dim),
+            )
 
         self.use_rope_emb = use_rope_emb
         if not self.use_rope_emb:
@@ -262,9 +271,14 @@ class VisionTransformerMAE(nn.Module):
         # ENCODER
         if decoder_mask is None:
             if verbose: print(x.shape)
-            x = self.patchify(x)
-            if verbose: print("patched", x.shape)
-            x = self.patch_to_emb(x)
+            if self.use_4d_conv:
+                x = self.patch_to_emb(x)
+                x = x.squeeze(2)
+                x = x.flatten(2).transpose(1, 2)
+            else:
+                x = self.patchify(x)
+                if verbose: print("patched", x.shape)
+                x = self.patch_to_emb(x)
             if verbose: print("patched_emb", x.shape)
             x = rearrange(x, "b ... d -> b (...) d")
             if verbose: print(x.shape)

@@ -220,10 +220,8 @@ class VisionTransformerMAE(nn.Module):
         self.decoder_embed_dim = self.decoder_transformer.embed_dim
 
         if self.use_4d_conv:
-            self.patch_to_emb = nn.Sequential(
-                Conv4d(in_channels=channels, out_channels=768, kernel_size=(frame_patch_size, patch_height, patch_width, patch_depth),
-                    stride=(frame_patch_size, patch_height, patch_width, patch_depth)).cuda()
-            ) 
+            self.patch_to_emb = Conv4d(in_channels=channels, out_channels=768, kernel_size=(frame_patch_size, patch_height, patch_width, patch_depth),
+                    stride=(frame_patch_size, patch_height, patch_width, patch_depth)) 
         else:
             self.patch_to_emb = nn.Sequential(
                 nn.LayerNorm(self.patch_dim),

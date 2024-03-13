@@ -5,9 +5,9 @@ use_contrastive_loss: False
 constrastive_loss_weight: 1.0
 
 # Training Configs
-global_batch_size: 8
+global_batch_size: 4
 num_workers: 4
-num_epochs: 100
+num_epochs: 300
 seed: 42
 max_lr: 3.0e-5 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 1024
@@ -24,9 +24,9 @@ resume_from_ckpt: False
 wandb_log: True
 
 # MAE Config
-tube_start_masking_ratio: 0.75
-tube_end_masking_ratio: 0.75
-decoder_mask_ratio: 0.75
+tube_start_masking_ratio: 0.85
+tube_end_masking_ratio: 0.85
+decoder_mask_ratio: 0.85
 
 # Model Config
 depth: 12

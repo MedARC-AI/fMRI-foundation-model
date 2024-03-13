@@ -315,7 +315,8 @@ class SimpleViT(nn.Module):
             
             x = self.yencoder_transformer(x, mask=encoder_mask if self.use_rope_emb else None)
             if verbose: print("after encoder", x.shape)
-            x = x[:, ~encoder_mask]
+            if encoder_mask is not None:
+                x = x[:, ~encoder_mask]
             if verbose: print("keeping masked tokens", x.shape)
             
         else:  # PREDICTOR

@@ -18,7 +18,8 @@ The model is trained on an L1 loss comparing the outputs of the Y-encoder and th
 
 ## Results
 
-The model has not yet been trained but this will be updated when it is.
+Pretrain and Downstrea results can be seen in the following projects folder:
+https://stability.wandb.io/ks9249/projects
 
 ## Contributing
 

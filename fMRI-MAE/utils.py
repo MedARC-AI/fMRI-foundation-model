@@ -9,7 +9,8 @@ from PIL import Image
 from skimage import filters
 from torchvision import transforms
 import nibabel as nib
-
+from nilearn import plotting
+import matplotlib.pyplot as plt
 
 def my_split_by_node(urls): return urls
 
@@ -57,81 +58,70 @@ def plot_numpy_nii(image):
 
 
 def threshold_based_masking(org_images):
-    org_images[org_images == 1] = 0  # ignore the padding
     thresholds = filters.threshold_multiotsu(org_images.numpy(), classes=3)
     brain_segmentation = org_images > thresholds.min()
     return brain_segmentation
 
 
 def get_brain_pos_patches(
-    brain_segmentation,
+    func,
     patch_depth=8,
     patch_height=8,
     patch_width=8,
     frame_patch_size=1,
     masking_strategy="conservative",
 ):
-    reshaped_mask = reshape_to_original(brain_segmentation)
-    frames, _, _, depth = reshaped_mask.shape
+    _, _, depth = func.shape
     if masking_strategy == "conservative":
-        # plt.imshow(reshaped_mask.sum(axis=(0, -1))) # [64, 64]
-        reshaped_mask = reshaped_mask.sum(axis=(0, -1), keepdim=True).repeat(
-            frames, 1, 1, depth
-        )  # [4, 64, 64, 48]
+        func = func.sum(axis=(-1), keepdim=True).repeat(1, 1, depth)
+    else:
+        raise Exception("Not implemented other masking strategies than conservative.")
 
-    patched_mask = rearrange(
-        reshaped_mask,
-        "(f pf) (d pd) (h ph) (w pw) -> f d h w (pd ph pw pf)",
-        pd=patch_depth,
-        ph=patch_height,
-        pw=patch_width,
-        pf=frame_patch_size,
-    )
-    return (patched_mask.sum(-1) > 0).int().flatten()
+    return func
 
 
 class DataPrepper:
     def __init__(
         self,
-        masking_strategy="conservative",
+        num_frames=4,
+        masking_strategy="MNI",
         patch_depth=8,
         patch_height=8,
         patch_width=8,
         frame_patch_size=1,
     ):
+        self.num_frames = num_frames
         self.masking_strategy = masking_strategy
         self.patch_depth = 8
         self.patch_height = 8
         self.patch_width = 8
         self.frame_patch_size = 1
 
-    def __call__(self, sample):
-        func, minmax, meansd = sample
-        min_, max_, min_meansd, max_meansd = minmax
-        reshaped_func = reshape_to_original(func)
+    def __call__(self, func):
+        start_timepoint = np.random.choice(np.arange(func.shape[1] - self.num_frames))
+        timepoints = np.arange(start_timepoint, start_timepoint + self.num_frames)
 
-        if len(reshaped_func) == 4:
-            timepoints = np.arange(4)
-        else:
-            start_timepoint = np.random.choice(np.arange(len(reshaped_func) - 4))
-            timepoints = np.arange(start_timepoint, start_timepoint + 4)
+        func = func[:,timepoints]
 
-        func = torch.Tensor(reshaped_func[timepoints])
-        meansd = torch.Tensor(reshape_to_original(meansd))
-
-        # Keep track of the empty patches
-        mean, sd = meansd
-        org_images = reshape_to_2d(func * mean + sd)
-        brain_segmentation = threshold_based_masking(org_images)
-        pos_patches = get_brain_pos_patches(
-            brain_segmentation,
-            patch_depth=self.patch_depth,
-            patch_height=self.patch_height,
-            patch_width=self.patch_width,
-            frame_patch_size=self.frame_patch_size,
-            masking_strategy=self.masking_strategy,
-        )
-        return func, meansd, pos_patches
+        if self.masking_strategy=="MNI":
+            return func, None
+        
+        brain_segmentation = threshold_based_masking(func.mean(1))
+        pos_patches = None
+        for brain in brain_segmentation:
+            output = get_brain_pos_patches(
+                brain,
+                patch_depth=self.patch_depth,
+                patch_height=self.patch_height,
+                patch_width=self.patch_width,
+                frame_patch_size=self.frame_patch_size,
+                masking_strategy=self.masking_strategy,
+            )
+            if pos_patches is None:
+                pos_patches = output[None]
+            else:
+                pos_patches = torch.vstack((pos_patches, output[None]))
+        return func, pos_patches
 
 
 def plot_slices(unpatches):
@@ -245,3 +235,16 @@ def torch_to_Image(x):
 def get_masking_ratio(current_epoch, total_epochs, start_masking_ratio, end_masking_ratio):
     """Returns the masking ratio for the current epochs. Linearly increase the masking ratio over the span of the training"""
     return start_masking_ratio + (end_masking_ratio-start_masking_ratio) * ((current_epoch+1)/total_epochs)
+
+def view_brain(data):
+    if torch.is_tensor(data):
+        data = data.numpy()
+    if data.ndim==5:
+        new_nii = nib.Nifti1Image((data[0,0].astype(np.float32)-.5)*2, np.eye(4))
+    elif data.ndim==4:
+        new_nii = nib.Nifti1Image((data[0].astype(np.float32)-.5)*2, np.eye(4))
+    elif data.ndim==3:
+        new_nii = nib.Nifti1Image((data.astype(np.float32)-.5)*2, np.eye(4))
+    else:
+        raise Exception("Check dimensionality of your brain data")
+    return plotting.view_img(new_nii, bg_img=None, vmax=1, cmap=plt.cm.gray, threshold=None)

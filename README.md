@@ -13,3 +13,16 @@ snapshot_download(repo_id="pscotti/fmrifoundation", repo_type = "dataset", revis
 2. Run setup.sh to create a new "fmri" virtual environment
 
 3. Activate the virtual environment with "source fmri/bin/activate"
+
+4. Install causal_conv1d and mamba from VideoMamba 
+```
+git clone https://github.com/OpenGVLab/VideoMamba.git
+cd VideoMamba
+```
+Install causal_conv1d and mamba 
+```
+pip install -r requirements.txt
+pip install -e causal-conv1d
+pip install -e mamba
+```
+We don't actually need VideoMamba so you can delete that repo once you've installed causal_conv1d and mamba 

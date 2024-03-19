@@ -14,7 +14,9 @@
 export NUM_GPUS=4  # Set to equal gres=gpu:#!
 
 source ~/.bashrc
-cd /weka/proj-fmri/paulscotti/fMRI-foundation-model/fMRI-MAE/
+
+cd /weka/home-alexnguyen/mamba_fmri/fMRI-MAE/
+source /weka/home-alexnguyen/mamba_fmri/fmri/bin/activate
 jupyter nbconvert main.ipynb --to python
 
 # Make sure another job doesnt use same port, here using random number
@@ -26,5 +28,6 @@ echo MASTER_ADDR=${MASTER_ADDR}
 echo MASTER_PORT=${MASTER_PORT}
 echo WORLD_SIZE=${COUNT_NODE}
 
-accelerate launch --num_processes=$(($NUM_GPUS * $COUNT_NODE)) --num_machines=$COUNT_NODE --main_process_ip=$MASTER_ADDR --main_process_port=$MASTER_PORT --mixed_precision=fp16 main.py
+accelerate launch --num_processes=$(($NUM_GPUS * $COUNT_NODE)) --num_machines=$COUNT_NODE --main_process_ip=$MASTER_ADDR --main_process_port=$MASTER_PORT --mixed_precision=fp16 \
+    main.py
 # srun python main.py

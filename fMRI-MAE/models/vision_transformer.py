@@ -259,6 +259,9 @@ class VisionTransformerMAE(nn.Module):
                             )
 
     def forward(self, x, encoder_mask=None, decoder_mask=None, verbose=False):
+        """
+            x: batch channel time depth height width
+        """
         # ENCODER
         if decoder_mask is None:
             if verbose: print(x.shape)
@@ -278,9 +281,9 @@ class VisionTransformerMAE(nn.Module):
                 x = torch.cat((cls_tokens, x), dim=1)
             if verbose: print("masked", x.shape)
             x = self.encoder_transformer(x, mask=encoder_mask if self.use_rope_emb else None)
-            if verbose: print(x.shape)
+            if verbose: print("encoder output", x.shape)
         else:  # DECODER
-            if verbose: print(x.shape)
+            if verbose: print("decoder input", x.shape)
             x = self.encoder_to_decoder(x)
             B, _, _ = x.shape
             N = decoder_mask.sum()
@@ -290,8 +293,8 @@ class VisionTransformerMAE(nn.Module):
                 if verbose: print("pe", pos_embed.shape)
                 pos_emd_encoder = pos_embed[encoder_mask]
                 pos_emd_decoder = pos_embed[decoder_mask]
-                if verbose: print("pos_emd_encoder", pos_emd_encoder.shape)
-                if verbose: print("pos_emd_decoder", pos_emd_decoder.shape)
+                if verbose: print("use_cls_token",self.use_cls_token,"pos_emd_encoder", pos_emd_encoder.shape, "pos_embed",pos_embed.shape)
+                if verbose: print("pos_emd_decoder", pos_emd_decoder.shape, "pos_embed",pos_embed.shape)
                 if self.use_cls_token:
                     cls_tokens = x[:,:1,:]
                     x = x[:,1:,:]
@@ -306,7 +309,7 @@ class VisionTransformerMAE(nn.Module):
                 x = torch.cat([x,self.mask_token.repeat(B, N - 1 if self.use_cls_token else N, 1)],dim=1)
             if verbose: print("x_concat", x.shape)
             x = self.decoder_transformer(x, mask=mask)
-            if verbose: print(x.shape)
+            if verbose: print("decoder_transformer output", x.shape)
             x = self.decoder_proj(x)
             if verbose: print("proj", x.shape)
         return x

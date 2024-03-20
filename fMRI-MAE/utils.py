@@ -11,6 +11,7 @@ from torchvision import transforms
 import nibabel as nib
 from nilearn import plotting
 import matplotlib.pyplot as plt
+import re
 
 def my_split_by_node(urls): return urls
 
@@ -248,3 +249,19 @@ def view_brain(data):
     else:
         raise Exception("Check dimensionality of your brain data")
     return plotting.view_img(new_nii, bg_img=None, vmax=1, cmap=plt.cm.gray, threshold=None)
+
+def get_first_tar(train_urls):
+    if isinstance(train_urls, list):
+        # If train_urls is a list, get the first element
+        url = train_urls[0]
+    else:
+        # If train_urls is a string, treat it as the only element
+        url = train_urls
+
+    # Extract the first tar file using regular expression
+    match = re.search(r'\{(\d+)\.\.', url)
+    if match:
+        first_tar = match.group(1)
+        return f"/scratch/fmri_foundation_datasets/NSD_MNI_wds/{first_tar}.tar"
+    else:
+        return None

@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --account=fmri
-#SBATCH --partition=a40x
+#SBATCH --partition=a40
 #SBATCH --job-name=fsdp
 #SBATCH --nodes=2    
 #SBATCH --ntasks-per-node=1
-#SBATCH --gres=gpu:2
-#SBATCH --gpus-per-task=2       # Set to equal gres=gpu:#!
+#SBATCH --gres=gpu:8
+#SBATCH --gpus-per-task=8       # Set to equal gres=gpu:#!
 #SBATCH --time=20:00:00         # total run time limit (HH:MM:SS)
 #SBATCH -e slurms/%j.err        # first create a "slurms" folder in current directory to store logs
 #SBATCH -o slurms/%j.out
@@ -13,13 +13,13 @@
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
-export NUM_GPUS=2 # Set to equal gres=gpu:#!
+export NUM_GPUS=8 # Set to equal gres=gpu:#!
 echo NUM_GPUS=$NUM_GPUS
 
 source ~/.bashrc
 
 cd /weka/proj-fmri/paulscotti/fMRI-foundation-model/fMRI-MAE/
-jupyter nbconvert main_FSDP_litdata.ipynb --to python
+jupyter nbconvert main_FSDP.ipynb --to python
 if [ $? -ne 0 ]; then
   echo "Error: Conversion of ipynb to Python failed. Exiting."
   exit 1
@@ -47,7 +47,8 @@ export FI_PROVIDER=efa
 export FI_EFA_TX_MIN_CREDITS=64
 export NCCL_TREE_THRESHOLD=0
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
-export NCCL_CROSS_NIC=1
+export NCCL_P2P_DISABLE=1
+module load openmpi cuda/12.1
 
 srun torchrun \
 --nproc_per_node=$NUM_GPUS \
@@ -56,7 +57,7 @@ srun torchrun \
 --rdzv_backend=c10d \
 --rdzv_endpoint=${MASTER_ADDR}:$MASTER_PORT \
 --rdzv_conf=timeout=90 \
-main_FSDP_litdata.py
+main_FSDP.py
 
 if [ $? -ne 0 ]; then
   echo "Error: srun command failed. Please check the logs for more details."

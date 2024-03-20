@@ -1,13 +1,13 @@
 # Model Config
-model_name: "MAE_2node_2gpu_32gbs_d_lit" #"patch8_ViTS_1gpu_8gbs_50epoch"
+model_name: "MAE_2node_e" #"patch8_ViTS_1gpu_8gbs_50epoch"
 use_cls_token: False
 use_contrastive_loss: False
 constrastive_loss_weight: 1.0
 
 # Training Configs
-global_batch_size: 32
-num_workers: 6
-num_epochs: 30
+global_batch_size: 16
+num_workers: 1
+num_epochs: 100
 seed: 42
 max_lr: 3.0e-5 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 1024
@@ -24,7 +24,7 @@ tube_end_masking_ratio: 0.95
 decoder_mask_ratio: 0.95
 
 # Model Config
-encoder_model: "vit_base"
+encoder_model: "vit_small"
 decoder_model: "vit_small"
 patch_size: 8
 frame_patch_size: 1
@@ -34,13 +34,13 @@ masking_strategy: "MNI"
 # Data Config
 img_size: [88, 104, 72] # Image Size
 num_frames: 4
-is_s3: False
+is_s3: True
 # 000495.tar is missing??
-# train_urls: ["s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000000..000494}.tar","s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000496..000740}.tar"]
+train_urls: ["s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000000..000494}.tar","s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000496..000740}.tar"]
 
 #"/weka/proj-fmri/paulscotti/old_fMRI-foundation-model/dataset_creation/wds_creation/wds/000000.tar"
 #"s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000000..000740}.tar"
 # test_urls: "s3://proj-fmri/fmri_foundation_datasets/openneuro_MNI_wds/000000.tar"
-train_urls: "/weka/proj-fmri/paulscotti/old_fMRI-foundation-model/dataset_creation/wds_creation/wds/{000001..000240}.tar"
+# train_urls: "/weka/proj-fmri/paulscotti/old_fMRI-foundation-model/dataset_creation/wds_creation/wds/{000001..000240}.tar"
 # train_urls: "/weka/proj-fmri/paulscotti/fMRI-foundation-model/dataset_creation/wds_creation/wds/{000000..000382}.tar"
 # test_urls: "/weka/proj-fmri/paulscotti/old_fMRI-foundation-model/dataset_creation/wds_creation/wds/000000.tar"

@@ -1,0 +1,59 @@
+# Model Config
+model_name: "s3_jepa_small_4node_FSDP_1worker_clamped"
+use_cls_token: False
+use_contrastive_loss: False
+constrastive_loss_weight: 1.0
+
+# Training Configs
+batch_size: 1
+num_workers: 1
+num_epochs: 200
+seed: 42
+max_lr: 3.0e-5 # Keep the x.0 else will be converted to string
+num_samples_per_epoch: 1024
+ema:
+  - 0.998
+  - 1.0
+ipe_scale: 1.25
+
+# Saving progress
+ckpt_saving: True
+ckpt_interval: 50
+resume_from_ckpt: False
+wandb_log: True
+
+# MAE Config
+x_encoder_start_masking_ratio: 0.95
+x_encoder_end_masking_ratio: 0.95
+y_encoder_mask_ratio: 0.95
+patch_size: 8
+frame_patch_size: 1
+use_rope_emb: False
+masking_strategy: "MNI"
+
+# # ViT-Mini
+# embed_dim: 64
+# mlp_dim: 64
+# depth: 6
+# num_heads: 4
+# dim_head: 16
+
+# ViT-Small
+embed_dim: 384
+mlp_dim: 1536
+depth: 12
+num_heads: 6
+# dim_head = embed_dim / num_heads
+dim_head: 64
+
+# Data Config
+image_size: [88, 104, 72] # Image Size
+num_frames: 4
+is_s3: True
+train_urls: ["/scratch/fmri_foundation_datasets/NSD_MNI_wds/{000000..000494}.tar",
+"/scratch/fmri_foundation_datasets/NSD_MNI_wds/{000496..000740}.tar"]
+# train_urls: ["/scratch/fmri_foundation_datasets/NSD_MNI_wds/{000000..000001}.tar",
+# "/scratch/fmri_foundation_datasets/NSD_MNI_wds/{000003..000004}.tar"]
+
+s3_train_urls: ["s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000000..000494}.tar","s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000496..000740}.tar"]
+# s3_train_urls: ["s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000000..000001}.tar","s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000003..000004}.tar"]

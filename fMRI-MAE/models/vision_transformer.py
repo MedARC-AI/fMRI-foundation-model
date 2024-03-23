@@ -250,7 +250,7 @@ class VisionTransformerMAE(nn.Module):
             self.encoder_posemb_sincos_4d = posemb_sincos_4d(
                 torch.zeros(
                     1,
-                    frames,
+                    frames//frame_patch_size,
                     image_depth // patch_depth,
                     image_height // patch_height,
                     image_width // patch_width,
@@ -260,7 +260,7 @@ class VisionTransformerMAE(nn.Module):
             self.decoder_posemb_sincos_4d = posemb_sincos_4d(
                 torch.zeros(
                     1,
-                    frames,
+                    frames//frame_patch_size,
                     image_depth // patch_depth,
                     image_height // patch_height,
                     image_width // patch_width,

@@ -1,5 +1,6 @@
 import numpy as np
 from torch import Tensor, stack
+import lightning as pl
 from torch.utils.data import IterDataPipe, DataLoader
 from torch.utils.data.datapipes._decorator import functional_datapipe
 from torch.utils.data.datapipes.iter.callable import MapperIterDataPipe
@@ -770,3 +771,43 @@ def create_loader(
         datapipeline, batch_size=None, num_workers=num_workers, **loader_kwargs
     )
     return loader
+
+class fMRIDataModule(pl.LightningDataModule):
+    def __init__(
+        self, 
+        train_urls:str,
+        test_urls: str,
+        batch_size: int,
+        num_workers: int
+    ):
+        super().__init__()
+        self.train_urls = train_urls
+        self.test_urls = test_urls
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.train_data = None
+        self.test_data = None
+    
+    def setup(self, stage: str):
+        self.train_data = create_dataset(
+            self.train_urls,
+            is_s3=self.train_urls[:2]=="s3", 
+            sample_shuffle=100,
+            shard_shuffle=100
+         ) if self.train_data is None else self.train_data
+        
+        self.test_data = create_dataset(
+            self.test_urls,
+            is_s3=self.test_urls[:2]=="s3", 
+            sample_shuffle=1, 
+            shard_shuffle=1
+        ) if self.test_data is None else self.test_data
+        
+    def train_dataloader(self):
+        return create_loader(self.train_data, batch_size=self.batch_size, num_workers=self.num_workers)
+    
+    def val_dataloader(self):
+        return create_loader(self.test_data, batch_size=self.batch_size, num_workers=self.num_workers)
+
+    def test_dataloader(self):
+        return self.val_dataloader()

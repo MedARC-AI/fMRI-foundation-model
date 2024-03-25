@@ -4,3 +4,5 @@ data
 **/__pycache__/
 **/cache/
 **/ckpts/
+**/slurms/
+**/wandb/

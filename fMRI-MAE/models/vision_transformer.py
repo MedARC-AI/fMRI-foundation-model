@@ -73,8 +73,21 @@ class Attention(nn.Module):
         x: torch.Tensor,
         pos_embed: Optional[nn.Module],
         mask: Optional[torch.Tensor] = None,
+        ridge: Optional[torch.Tensor] = None,
+        nn_emb: Optional[torch.Tensor] = None,
+        nn_patch: Optional[torch.Tensor] = None,
     ):
+        if ridge is not None:
+            for ir,r in enumerate(ridge):
+                x[ir] = r(x[ir])
+        
         x = self.norm(x)
+
+        if nn_emb is not None:
+            x *= nn_emb
+
+        if nn_patch is not None:
+            x += nn_patch
 
         qkv = self.to_qkv(x).chunk(3, dim=-1)
         q, k, v = map(lambda t: rearrange(t, "b n (h d) -> b h n d", h=self.num_heads), qkv)
@@ -98,6 +111,8 @@ class Attention(nn.Module):
 
         dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
 
+        # print("q", q.shape) # B num_heads N D
+        # print("dots", dots.shape) # B num_heads N N
         attn = self.attend(dots)
 
         out = torch.matmul(attn, v)
@@ -151,11 +166,16 @@ class Transformer(nn.Module):
                 grid_time=grid_time,
             )
 
-    def forward(self, x, mask: Optional[torch.Tensor] = None):
+    def forward(self, x, nn_emb=None, nn_patch=None, ridge=None, mask: Optional[torch.Tensor] = None):
         for attn, ff in self.layers:
             x = (
                 attn(
-                    x, pos_embed=self.rope_pos_emb if self.use_rope else None, mask=mask
+                    x, 
+                    pos_embed=self.rope_pos_emb if self.use_rope else None, 
+                    mask=mask,
+                    nn_emb=nn_emb,
+                    nn_patch=nn_patch,
+                    ridge=ridge,
                 )
                 + x
             )
@@ -176,6 +196,7 @@ class VisionTransformerMAE(nn.Module):
         channels=1,
         use_rope_emb: bool = False,
         use_cls_token: bool = False,
+        num_ids=1000,
         **args,
     ):
         super().__init__()
@@ -191,6 +212,8 @@ class VisionTransformerMAE(nn.Module):
         assert (frames % frame_patch_size == 0), "Frames must be divisible by the frame patch size"
 
         self.patch_dim = channels * patch_depth * patch_height * patch_width * frame_patch_size
+
+        self.num_patches = image_size[0]//image_patch_size[0] * image_size[1]//image_patch_size[1] * image_size[2]//image_patch_size[2] * frames
 
         self.patchify = Rearrange(
             "b c (f pf) (d pd) (h ph) (w pw) -> b f d h w (pd ph pw pf c)",
@@ -224,7 +247,7 @@ class VisionTransformerMAE(nn.Module):
 
         self.use_rope_emb = use_rope_emb
         if not self.use_rope_emb:
-            self.encoder_posemb_sincos_4d = posemb_sincos_4d(
+            self.posemb_sincos_4d = posemb_sincos_4d(
                 torch.zeros(
                     1,
                     frames,
@@ -232,16 +255,6 @@ class VisionTransformerMAE(nn.Module):
                     image_height // patch_height,
                     image_width // patch_width,
                     self.encoder_embed_dim,
-                )
-            )
-            self.decoder_posemb_sincos_4d = posemb_sincos_4d(
-                torch.zeros(
-                    1,
-                    frames,
-                    image_depth // patch_depth,
-                    image_height // patch_height,
-                    image_width // patch_width,
-                    self.decoder_embed_dim,
                 )
             )
 
@@ -255,22 +268,45 @@ class VisionTransformerMAE(nn.Module):
         self.decoder_proj = nn.Sequential(
                                 nn.LayerNorm(self.decoder_embed_dim), 
                                 nn.GELU(), 
-                                nn.Linear(self.decoder_embed_dim, self.patch_dim)
+                                nn.Linear(self.decoder_embed_dim, self.patch_dim),
                             )
+                            # 
 
-    def forward(self, x, encoder_mask=None, decoder_mask=None, verbose=False):
+        # # initialize decoder_proj outputs to be near zero
+        # torch.nn.init.normal_(self.decoder_proj[2].weight, mean=0.0, std=0.0001)
+        # torch.nn.init.constant_(self.decoder_proj[2].bias, 0.0)
+
+        # self.id_emb = nn.Embedding(num_ids, self.encoder_transformer.embed_dim)
+        # self.id_patch = nn.Embedding(num_ids, self.num_patches)
+        # self.id_bias = nn.Embedding(num_ids, self.encoder_transformer.embed_dim)
+        # self.ridge_encoder = [nn.Linear(self.encoder_transformer.embed_dim, self.encoder_transformer.embed_dim) for id in range(num_ids)]
+        # self.ridge_decoder = [nn.Linear(self.decoder_embed_dim, self.patch_dim) for id in range(num_ids)]
+
+    def forward(self, x, id=None, encoder_mask=None, decoder_mask=None, device="cuda", verbose=False):
+        if id is None:
+            id = torch.zeros(len(x)).long().to(device)
+            if verbose: print("created zero ids", id)
         # ENCODER
-        if decoder_mask is None:
+        if decoder_mask is None:            
             if verbose: print(x.shape)
             x = self.patchify(x)
             if verbose: print("patched", x.shape)
-            x = self.patch_to_emb(x)
+            x = self.patch_to_emb(x.to(device))
             if verbose: print("patched_emb", x.shape)
             x = rearrange(x, "b ... d -> b (...) d")
-            if verbose: print(x.shape)
+            if verbose: print("reshaped", x.shape)
+            
+            # add session-specific nn.Embedding
+            # if verbose: print("nn.Embedding")
+            #x = (x * self.id_weights(id).unsqueeze(1)) + self.id_bias(id).unsqueeze(1)
+            # if verbose: print(self.id_emb(id).unsqueeze(1).shape)
+            # if verbose: print(self.id_patch(id).unsqueeze(-1).shape)
+            # x = x * (self.id_emb(id).unsqueeze(1) + 1) # add by 1 since initialization is N(0,1)
+            # x = x + self.id_patch(id).unsqueeze(-1)
+            
             if not self.use_rope_emb:
-                if verbose: print("pe", self.encoder_posemb_sincos_4d.shape)
-                x = x + self.encoder_posemb_sincos_4d.to(x.device)
+                if verbose: print("pe", self.posemb_sincos_4d.shape)
+                x = x + self.posemb_sincos_4d.to(x.device)
             if verbose: print("x", x.shape)
             x = x[:, encoder_mask]
             if self.use_cls_token:
@@ -278,15 +314,20 @@ class VisionTransformerMAE(nn.Module):
                 x = torch.cat((cls_tokens, x), dim=1)
             if verbose: print("masked", x.shape)
             x = self.encoder_transformer(x, mask=encoder_mask if self.use_rope_emb else None)
+            # x = self.encoder_transformer(x, 
+            #                              ridge=[self.ridge_encoder[i].to(device) for i in id],
+            #                              mask=encoder_mask if self.use_rope_emb else None)
+            # nn_emb=self.id_emb(id).unsqueeze(1)+1, # +1 bc initialization is N(0,1)
+            # nn_patch=self.id_patch(id).unsqueeze(-1)[:, encoder_mask],
             if verbose: print(x.shape)
         else:  # DECODER
             if verbose: print(x.shape)
-            x = self.encoder_to_decoder(x)
+            x = self.encoder_to_decoder(x.to(device))
             B, _, _ = x.shape
             N = decoder_mask.sum()
             mask = None
             if not self.use_rope_emb:
-                pos_embed = self.decoder_posemb_sincos_4d.to(x.device)
+                pos_embed = self.posemb_sincos_4d.to(x.device)
                 if verbose: print("pe", pos_embed.shape)
                 pos_emd_encoder = pos_embed[encoder_mask]
                 pos_emd_decoder = pos_embed[decoder_mask]
@@ -309,14 +350,31 @@ class VisionTransformerMAE(nn.Module):
             if verbose: print(x.shape)
             x = self.decoder_proj(x)
             if verbose: print("proj", x.shape)
+            # # session-wise ridge
+            # orig_x_shape = x.shape
+            # x = torch.cat((x, torch.zeros(x.shape[0], x.shape[1], self.patch_dim - orig_x_shape[-1]).to(x.device)), dim=-1)
+            # ridge = [self.ridge_decoder[i].to(device) for i in id]
+            # for ir,r in enumerate(ridge):
+            #     x[ir] = r(x[ir,:,:orig_x_shape[-1]])
+            # if verbose: print("proj+ridge", x.shape)
         return x
+
+def transformer_mini(**args):
+    return Transformer(
+        embed_dim=48,
+        depth=6,
+        num_heads=2, 
+        mlp_dim=1024,
+        dim_head=64,
+        **args
+    )
 
 def transformer_small(**args):
     return Transformer(
         embed_dim=384,
         depth=12,
         num_heads=6,
-        mlp_dim=1_536,
+        mlp_dim=1536,
         dim_head=64,
         **args
     )
@@ -326,7 +384,7 @@ def transformer_base(**args):
         embed_dim=768,
         depth=12,
         num_heads=12,
-        mlp_dim=3_072,
+        mlp_dim=3072,
         dim_head=64,
         **args
     )    
@@ -336,7 +394,7 @@ def transformer_large(**args):
         embed_dim=1024,
         depth=24,
         num_heads=16,
-        mlp_dim=4_096,
+        mlp_dim=4096,
         dim_head=64,
         **args
     )
@@ -346,12 +404,13 @@ def transformer_huge(**args):
         embed_dim=1280,
         depth=32,
         num_heads=16,
-        mlp_dim=5_120,
+        mlp_dim=5120,
         dim_head=64,
         **args
     )
 
 transformer_mapping = {
+    "vit_mini": transformer_mini,
     "vit_small": transformer_small,
     "vit_base": transformer_base,
     "vit_large": transformer_large,

@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --account=fmri
 #SBATCH --partition=a40x
-#SBATCH --job-name=afni
+#SBATCH --job-name=afni1
 #SBATCH --gres=gpu:1
 #SBATCH --nodes=1
 #SBATCH --time=350:00:00       # total run time limit (HH:MM:SS)

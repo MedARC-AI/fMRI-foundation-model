@@ -3,14 +3,22 @@
 worker_id=$1
 TEMP_PATH="temp${worker_id}/"
 OUT_PATH="MNIs${worker_id}/"
+END_PATH="END_${worker_id}/"
 TEMPLATE_PATH="tpl-MNI152NLin2009cAsym_res-02_T1w_brain.nii.gz"
 suffix="_MNI"
 
 echo "Worker ID is $worker_id"
 echo "OUT_PATH is $OUT_PATH"
 echo "TEMP_PATH is $TEMP_PATH"
+echo "END_PATH is $END_PATH"
 
 while true; do
+    # Check if the "END" folder exists
+    if [ -d $END_PATH]; then
+        echo "END folder found. Stopping the script."
+        break
+    fi
+
     # Find all .nii.gz files in the folder (including subdirectories)
     readarray -t files < <(find $TEMP_PATH -type f -name "*_bold.nii.gz")
     for func in "${files[@]}"; do

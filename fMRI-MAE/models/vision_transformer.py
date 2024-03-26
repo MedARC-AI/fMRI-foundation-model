@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from einops.layers.torch import Rearrange
 from rope import RotaryPositionalEmbeddings4D
+from flash_attn import flash_attn_qkvpacked_func, flash_attn_func
 
 def posemb_sincos_4d(patches, temperature=10000, dtype=torch.float32):
     _, f, d, h, w, dim, device, dtype = (*patches.shape, patches.device, patches.dtype)
@@ -168,7 +169,7 @@ class Transformer(nn.Module):
             self.layers.append(
                 nn.ModuleList(
                     [
-                        Flash_Attention(
+                        FlashAttention(
                             embed_dim,
                             num_heads=num_heads,
                             dim_head=dim_head,

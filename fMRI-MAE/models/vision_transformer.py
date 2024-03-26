@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from einops.layers.torch import Rearrange
 from rope import RotaryPositionalEmbeddings4D
+from flash_attn import flash_attn_qkvpacked_func, flash_attn_func
 
 def posemb_sincos_4d(patches, temperature=10000, dtype=torch.float32):
     _, f, d, h, w, dim, device, dtype = (*patches.shape, patches.device, patches.dtype)
@@ -103,6 +104,45 @@ class Attention(nn.Module):
         out = torch.matmul(attn, v)
         out = rearrange(out, "b h n d -> b n (h d)")
         return self.to_out(out)
+    
+    
+class FlashAttention(nn.Module):
+    def __init__(
+        self,
+        embed_dim: int,
+        num_heads: int = 8,
+        dim_head: int = 64,
+        use_rope: bool = False,
+        cls_token: bool = False,
+    ):
+        super().__init__()
+        inner_dim = dim_head * num_heads
+        self.dim_head = dim_head
+        self.num_heads = num_heads
+        self.scale = dim_head ** -0.5
+        self.use_rope = use_rope
+        self.cls_token = cls_token
+        self.norm = nn.LayerNorm(embed_dim)
+        self.to_qkv = nn.Linear(embed_dim, inner_dim * 3, bias=False)
+        self.to_out = nn.Linear(inner_dim, embed_dim, bias=False)
+        self.inner_dim = inner_dim
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        pos_embed: Optional[nn.Module],
+        mask: Optional[torch.Tensor] = None,
+    ):
+        x = self.norm(x)
+        qkv = self.to_qkv(x) # batch_size x seq_len x (3 * inner_dim) 
+        qkv = rearrange(qkv, 'b s (qkv d) -> b s qkv d', qkv=3, d=self.inner_dim)
+        qkv = rearrange(qkv, 'b s qkv (h d) -> b s qkv h d', h=self.num_heads)
+        # Using FlashAttention
+        attn_output = flash_attn_qkvpacked_func(qkv, dropout_p=0.0, softmax_scale=None, causal=False)
+        attn_output = rearrange(attn_output, 'b s h d -> b s (h d)')
+        out = self.to_out(attn_output)
+        return out
+    
 
 
 class Transformer(nn.Module):
@@ -129,7 +169,7 @@ class Transformer(nn.Module):
             self.layers.append(
                 nn.ModuleList(
                     [
-                        Attention(
+                        FlashAttention(
                             embed_dim,
                             num_heads=num_heads,
                             dim_head=dim_head,

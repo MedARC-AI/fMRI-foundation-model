@@ -11,7 +11,6 @@
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
-export NUM_GPUS=4  # Set to equal gres=gpu:#!
 
 source ~/.bashrc
 
@@ -20,6 +19,8 @@ source /weka/home-alexnguyen/mamba_fmri/fmri/bin/activate
 jupyter nbconvert main.ipynb --to python
 
 # Make sure another job doesnt use same port, here using random number
+export NUM_GPUS=4  # Set to equal gres=gpu:#!
+
 export MASTER_PORT=$((RANDOM % (19000 - 11000 + 1) + 11000)) 
 export HOSTNAMES=$(scontrol show hostnames "$SLURM_JOB_NODELIST")
 export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)

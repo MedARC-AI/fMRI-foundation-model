@@ -1,15 +1,15 @@
 # Model Config
-model_name: "patch8_100eps_4gpu_accelerate_b"
+model_name: "mar24_encoder_decoder_mamba64_lr3e-4"
 use_cls_token: False
 use_contrastive_loss: False
 constrastive_loss_weight: 1.0
 
 # Training Configs
-global_batch_size: 8
+global_batch_size: 64
 num_workers: 4
-num_epochs: 100
+num_epochs: 400
 seed: 42
-max_lr: 3.0e-5 # Keep the x.0 else will be converted to string
+max_lr: 3.0e-4 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 1024
 cache_dir: "cache"
 
@@ -35,5 +35,5 @@ use_rope_emb: False
 # Data Config
 img_size: [64, 64, 48] # Image Size
 num_frames: 4
-train_urls: "s3://proj-fmri/fmri_foundation_datasets/openneuro/{000005..000664}.tar"
-test_urls: "s3://proj-fmri/fmri_foundation_datasets/openneuro/{000000..000004}.tar"
+train_urls: "s3://proj-fmri/fmri_foundation_datasets/openneuro_MNI_wds/{000005..000173}.tar"
+test_urls: "s3://proj-fmri/fmri_foundation_datasets/openneuro_MNI_wds/{000000..000004}.tar"

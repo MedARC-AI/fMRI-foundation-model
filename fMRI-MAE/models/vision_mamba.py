@@ -296,7 +296,7 @@ class VisionMamba(nn.Module):
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, self.embed_dim))
         image_depth, image_height, image_width = img_size
-        self.encoder_posemb_sincos_4d = posemb_sincos_4d(
+        self.posemb_sincos_4d = posemb_sincos_4d(
                 torch.zeros(
                     1,
                     num_frames,
@@ -306,7 +306,7 @@ class VisionMamba(nn.Module):
                     self.embed_dim,
                 )
             )
-        print ("encoder_posemb_sincos_4d", self.encoder_posemb_sincos_4d.shape)
+        print ("posemb_sincos_4d", self.posemb_sincos_4d.shape)
         self.mask_token = nn.Parameter(torch.zeros(1, 1, self.embed_dim))
 
         # self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, self.embed_dim))
@@ -318,7 +318,24 @@ class VisionMamba(nn.Module):
         self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0. else nn.Identity()
         # mamba blocks
         print ("depth", depth, "d_model", embed_dim, "rms_norm", rms_norm, "residual_in_fp32", residual_in_fp32, "fused_add_norm", fused_add_norm, "bimamba", bimamba, "ssm_cfg", ssm_cfg)
-        self.layers = nn.ModuleList(
+        self.encoder_layers = nn.ModuleList(
+            [
+                create_block(
+                    embed_dim,
+                    ssm_cfg=ssm_cfg,
+                    norm_epsilon=norm_epsilon,
+                    rms_norm=rms_norm,
+                    residual_in_fp32=residual_in_fp32,
+                    fused_add_norm=fused_add_norm,
+                    layer_idx=i,
+                    bimamba=bimamba,
+                    drop_path=inter_dpr[i],
+                    **factory_kwargs,
+                )
+                for i in range(depth)
+            ]
+        )
+        self.decoder_layers = nn.ModuleList(
             [
                 create_block(
                     embed_dim,
@@ -356,75 +373,116 @@ class VisionMamba(nn.Module):
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
         return {
             i: layer.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, **kwargs)
-            for i, layer in enumerate(self.layers)
+            for i, layer in enumerate(self.encoder_layers)
         }
 
     @torch.jit.ignore
     def no_weight_decay(self):
-        return {"pos_embed", "cls_token", "temporal_pos_embedding"}
+        # return {"pos_embed", "cls_token", "temporal_pos_embedding"}
+        return {"cls_token", "mask_token", "posemb_sincos_4d"}
     
     def get_num_layers(self):
-        return len(self.layers)
+        return len(self.encoder_layers) + len(self.decoder_layers)
 
     @torch.jit.ignore()
     def load_pretrained(self, checkpoint_path, prefix=""):
         _load_weights(self, checkpoint_path, prefix)
 
     def forward_features(self, x, inference_params, encoder_mask=None, decoder_mask=None, verbose=False):
-        # x = self.patch_embed(x)
-        # print("inp", x.shape)
-        x = self.patchify(x)
-        # print("patchify", x.shape)
-        x = self.patch_to_emb(x)
-        # print("patched_emb", x.shape)
-        B, T, D, H, W, C = x.shape
-        # x = x.permute(0, 2, 3, 4, 1).reshape(B * T, H * W, C)
-        x = rearrange(x, "b ... d -> b (...) d")
-        # print ("rearrange", x.shape)
-        # position embeddings
-        x = x[:, encoder_mask] + self.encoder_posemb_sincos_4d[encoder_mask].to(x.device)
-        x = self.pos_drop(x)
-        # print ("after encoder embeddings", x.shape)
-        pos_emd_decoder = self.encoder_posemb_sincos_4d[decoder_mask].to(x.device)
-        # print("pos_emd_decoder", pos_emd_decoder.shape) 
-        x = torch.cat([x, 
-                               self.mask_token.repeat(B, pos_emd_decoder.size(0), 1) + pos_emd_decoder], 
-                               dim=1) 
-        # print("before mamba", x.shape) 
-        # mamba impl
-        residual = None
-        hidden_states = x
-        for idx, layer in enumerate(self.layers):
-            if self.use_checkpoint and idx < self.checkpoint_num:
-                hidden_states, residual = layer(
-                    hidden_states, residual, inference_params=inference_params,
-                    use_checkpoint=True
-                )
+        if decoder_mask is None:
+            # print("inp", x.shape)
+            x = self.patchify(x)
+            # print("patchify", x.shape)
+            x = self.patch_to_emb(x)
+            # print("patched_emb", x.shape)
+            B, T, D, H, W, C = x.shape
+            # x = x.permute(0, 2, 3, 4, 1).reshape(B * T, H * W, C)
+            x = rearrange(x, "b ... d -> b (...) d")
+            # print ("rearrange", x.shape)
+            # position embeddings
+            x = x[:, encoder_mask] + self.posemb_sincos_4d[encoder_mask].to(x.device)
+            x = self.pos_drop(x)
+            # print ("after encoder embeddings", x.shape)
+            
+            # print("before mamba", x.shape) 
+            # mamba impl
+            residual = None
+            hidden_states = x
+            for idx, layer in enumerate(self.encoder_layers):
+                if self.use_checkpoint and idx < self.checkpoint_num:
+                    hidden_states, residual = layer(
+                        hidden_states, residual, inference_params=inference_params,
+                        use_checkpoint=True
+                    )
+                else:
+                    hidden_states, residual = layer(
+                        hidden_states, residual, inference_params=inference_params
+                    )
+    
+            if not self.fused_add_norm:
+                if residual is None:
+                    residual = hidden_states
+                else:
+                    residual = residual + self.drop_path(hidden_states)
+                hidden_states = self.norm_f(residual.to(dtype=self.norm_f.weight.dtype))
             else:
-                hidden_states, residual = layer(
-                    hidden_states, residual, inference_params=inference_params
+                # Set prenorm=False here since we don't need the residual
+                fused_add_norm_fn = rms_norm_fn if isinstance(self.norm_f, RMSNorm) else layer_norm_fn
+                hidden_states = fused_add_norm_fn(
+                    self.drop_path(hidden_states),
+                    self.norm_f.weight,
+                    self.norm_f.bias,
+                    eps=self.norm_f.eps,
+                    residual=residual,
+                    prenorm=False,
+                    residual_in_fp32=self.residual_in_fp32,
                 )
- 
-        if not self.fused_add_norm:
-            if residual is None:
-                residual = hidden_states
+            # print ("hidden_states", hidden_states.shape)
+            return hidden_states 
+        else:  # DECODER
+            if verbose: print("decoder input", x.shape)
+            B, _, _ = x.shape
+            pos_emd_encoder = self.posemb_sincos_4d[encoder_mask].to(x.device)
+            pos_emd_decoder = self.posemb_sincos_4d[decoder_mask].to(x.device)
+            # print("pos_emd_encoder", pos_emd_encoder.shape, "pos_emd_decoder", pos_emd_decoder.shape)
+            x = torch.cat([x + pos_emd_encoder, 
+                                self.mask_token.repeat(B, pos_emd_decoder.size(0), 1) + pos_emd_decoder], 
+                                dim=1) 
+
+            x = self.pos_drop(x)
+            # print("decoder input after pos", x.shape)
+            residual = None
+            hidden_states = x
+            for idx, layer in enumerate(self.decoder_layers):
+                if self.use_checkpoint and idx < self.checkpoint_num:
+                    hidden_states, residual = layer(
+                        hidden_states, residual, inference_params=inference_params,
+                        use_checkpoint=True
+                    )
+                else:
+                    hidden_states, residual = layer(
+                        hidden_states, residual, inference_params=inference_params
+                    )
+
+            if not self.fused_add_norm:
+                if residual is None:
+                    residual = hidden_states
+                else:
+                    residual = residual + self.drop_path(hidden_states)
+                hidden_states = self.norm_f(residual.to(dtype=self.norm_f.weight.dtype))
             else:
-                residual = residual + self.drop_path(hidden_states)
-            hidden_states = self.norm_f(residual.to(dtype=self.norm_f.weight.dtype))
-        else:
-            # Set prenorm=False here since we don't need the residual
-            fused_add_norm_fn = rms_norm_fn if isinstance(self.norm_f, RMSNorm) else layer_norm_fn
-            hidden_states = fused_add_norm_fn(
-                self.drop_path(hidden_states),
-                self.norm_f.weight,
-                self.norm_f.bias,
-                eps=self.norm_f.eps,
-                residual=residual,
-                prenorm=False,
-                residual_in_fp32=self.residual_in_fp32,
-            )
-        # print ("hidden_states", hidden_states.shape)
-        return hidden_states 
+                # Set prenorm=False here since we don't need the residual
+                fused_add_norm_fn = rms_norm_fn if isinstance(self.norm_f, RMSNorm) else layer_norm_fn
+                hidden_states = fused_add_norm_fn(
+                    self.drop_path(hidden_states),
+                    self.norm_f.weight,
+                    self.norm_f.bias,
+                    eps=self.norm_f.eps,
+                    residual=residual,
+                    prenorm=False,
+                    residual_in_fp32=self.residual_in_fp32,
+                )
+            return hidden_states
 
     def forward(self, x, inference_params=None, encoder_mask=None, decoder_mask=None, verbose=False):
         x = self.forward_features(x, inference_params, encoder_mask, decoder_mask, verbose)

@@ -1,5 +1,5 @@
 # Model Config
-model_name: "MambaMAE_bs8_95mask_8patch_2node_redo"
+model_name: "MambaMAE_bs8_95mask_8patch_1node_alexhelp_400ep"
 use_cls_token: False
 use_contrastive_loss: True
 constrastive_loss_weight: 0.01
@@ -7,7 +7,7 @@ constrastive_loss_weight: 0.01
 # Training Configs
 batch_size: 4
 num_workers: 10
-num_epochs: 200
+num_epochs: 400
 seed: 42
 max_lr: 3.0e-6 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 1024

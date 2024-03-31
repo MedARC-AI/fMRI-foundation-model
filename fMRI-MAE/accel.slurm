@@ -3,7 +3,7 @@
 #SBATCH --partition=a40
 #SBATCH --job-name=fmrimamba
 #SBATCH --ntasks-per-node=1
-#SBATCH --nodes=2    
+#SBATCH --nodes=1
 #SBATCH --gres=gpu:8
 #SBATCH --gpus-per-task=8       # Set to equal gres=gpu:#!
 #SBATCH --time=20:00:00         # total run time limit (HH:MM:SS)

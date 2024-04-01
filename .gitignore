@@ -1,6 +1,10 @@
+<<<<<<< HEAD
 fmri
 cache
 data
 **/__pycache__/
 **/cache/
 **/ckpts/
+=======
+**/__pycache__/
+>>>>>>> 70ebdb617d83b0915ee5bf6af735be3f5a76bf59

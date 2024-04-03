@@ -173,6 +173,8 @@ def _init_weights(
         #   >   -- GPT-2 :: https://openai.com/blog/better-language-models/
         #
         # Reference (Megatron-LM): https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/model/gpt_model.py
+        # print module name 
+        
         for name, p in module.named_parameters():
             if name in ["out_proj.weight", "fc2.weight"]:
                 # Special Scaled Initialization --> There are 2 Layer Norms per Transformer Block
@@ -239,7 +241,8 @@ class VisionMamba(nn.Module):
             img_size=224, 
             patch_size=16, 
             frame_patch_size=4,
-            depth=24, 
+            encoder_depth=24, 
+            decoder_depth=24,
             embed_dim=192, 
             channels=3, 
             drop_rate=0.,
@@ -313,11 +316,13 @@ class VisionMamba(nn.Module):
         # self.temporal_pos_embedding = nn.Parameter(torch.zeros(1, num_frames // kernel_size, embed_dim))
         self.pos_drop = nn.Dropout(p=drop_rate)
 
-        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
-        inter_dpr = [0.0] + dpr
+        # dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        encoder_dpr = [x.item() for x in torch.linspace(0, drop_path_rate, encoder_depth)]
+        # inter_dpr = [0.0] + dpr
+        encoder_inter_dpr = [0.0] + encoder_dpr
         self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0. else nn.Identity()
         # mamba blocks
-        print ("depth", depth, "d_model", embed_dim, "rms_norm", rms_norm, "residual_in_fp32", residual_in_fp32, "fused_add_norm", fused_add_norm, "bimamba", bimamba, "ssm_cfg", ssm_cfg)
+        print (embed_dim, "rms_norm", rms_norm, "residual_in_fp32", residual_in_fp32, "fused_add_norm", fused_add_norm, "bimamba", bimamba, "ssm_cfg", ssm_cfg)
         self.encoder_layers = nn.ModuleList(
             [
                 create_block(
@@ -329,12 +334,14 @@ class VisionMamba(nn.Module):
                     fused_add_norm=fused_add_norm,
                     layer_idx=i,
                     bimamba=bimamba,
-                    drop_path=inter_dpr[i],
+                    drop_path=encoder_inter_dpr[i],
                     **factory_kwargs,
                 )
-                for i in range(depth)
+                for i in range(encoder_depth)
             ]
         )
+        decoder_dpr = [x.item() for x in torch.linspace(0, drop_path_rate, decoder_depth)]
+        decoder_inter_dpr = [0.0] + decoder_dpr
         self.decoder_layers = nn.ModuleList(
             [
                 create_block(
@@ -346,12 +353,12 @@ class VisionMamba(nn.Module):
                     fused_add_norm=fused_add_norm,
                     layer_idx=i,
                     bimamba=bimamba,
-                    drop_path=inter_dpr[i],
+                    drop_path=decoder_inter_dpr[i],
                     **factory_kwargs,
                 )
-                for i in range(depth)
+                for i in range(decoder_depth)
             ]
-        )
+        ) 
         
         # output head
         self.norm_f = (nn.LayerNorm if not rms_norm else RMSNorm)(embed_dim, eps=norm_epsilon, **factory_kwargs)
@@ -361,11 +368,11 @@ class VisionMamba(nn.Module):
         self.apply(segm_init_weights)
         # trunc_normal_(self.pos_embed, std=.02)
 
-        # mamba init
+        # mamba init 
         self.apply(
             partial(
                 _init_weights,
-                n_layer=depth,
+                n_layer=encoder_depth + decoder_depth,
                 **(initializer_cfg if initializer_cfg is not None else {}),
             )
         )
@@ -492,8 +499,6 @@ class VisionMamba(nn.Module):
 
 def videomamba_middle_pretrain(pretrained=False, **kwargs):
     model = VisionMamba(
-        embed_dim=512, 
-        depth=32, 
         rms_norm=True, 
         residual_in_fp32=True, 
         fused_add_norm=True, 

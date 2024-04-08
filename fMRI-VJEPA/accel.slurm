@@ -2,10 +2,10 @@
 #SBATCH --account=fmri
 #SBATCH --partition=a40
 #SBATCH --job-name=fmri_jepa
-#SBATCH --nodes=3  
+#SBATCH --nodes=1  
 #SBATCH --ntasks-per-node=1
-#SBATCH --gres=gpu:8
-#SBATCH --gpus-per-task=8       # Set to equal gres=gpu:#!
+#SBATCH --gres=gpu:1
+#SBATCH --gpus-per-task=1       # Set to equal gres=gpu:#!
 #SBATCH --time=20:00:00         # total run time limit (HH:MM:SS)
 #SBATCH -e slurms/%j.err        # first create a "slurms" folder in current directory to store logs
 #SBATCH -o slurms/%j.out
@@ -13,7 +13,7 @@
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
-export NUM_GPUS=8 # Set to equal gres=gpu:#!
+export NUM_GPUS=1 # Set to equal gres=gpu:#!
 echo NUM_GPUS=$NUM_GPUS
 
 source ~/.bashrc

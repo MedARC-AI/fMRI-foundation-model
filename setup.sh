@@ -19,4 +19,4 @@ pip3 install torch torchvision torchaudio --index-url https://download.pytorch.o
 # pip install s3fs==2024.2.0
 
 # If you are NOT using Stability HPC then do this:
-# pip install torchdata==0.6.1 --no-deps
+pip install torchdata==0.6.1 --no-deps

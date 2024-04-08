@@ -1,14 +1,13 @@
 # Model Config
-model_name: "pretrain_8gbs_30sess_pretrain2"
-mae_model_name: "MAE_2node_e"
+model_name: "pretrain_framepatchsize4"
+mae_model_name: "framepatchsize4_bs8_300ep"
 
 # Training Configs
-global_batch_size: 8
+global_batch_size: 32
 mixed_precision: "fp16"
-num_epochs: 50
+num_epochs: 12
 seed: 42
 max_lr: 3.0e-4 # Keep the x.0 else will be converted to string
-num_samples_per_epoch: 512
 multi_subject: False
 multisubject_ckpt: None
 
@@ -19,7 +18,7 @@ resume_from_ckpt: False
 wandb_log: True
 
 # Model Config
-in_dim: 740352
+in_dim: 370176
 hidden_dim: 512
 drop: .15
 mixup_pct: 0.33
@@ -28,4 +27,4 @@ mixup_pct: 0.33
 nsd_wds_path: "/weka/proj-fmri/shared/mindeyev2_dataset/wds"
 nsd_raw_path: "/weka/proj-fmri/shared/mindeyev2_dataset"
 nsd_image_path: "/weka/proj-fmri/shared/mindeyev2_dataset"
-num_sessions: 30
+num_sessions: 40

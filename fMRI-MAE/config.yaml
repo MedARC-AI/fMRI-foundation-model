@@ -1,13 +1,13 @@
 # Model Config
-model_name: "MambaMAE_bs8_95mask_8patch_1node_alexhelp_400ep"
+model_name: "framepatchsize4_bs8_300ep"
 use_cls_token: False
-use_contrastive_loss: True
+use_contrastive_loss: False
 constrastive_loss_weight: 0.01
 
 # Training Configs
-batch_size: 4
+batch_size: 8
 num_workers: 10
-num_epochs: 400
+num_epochs: 300
 seed: 42
 max_lr: 3.0e-6 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 1024
@@ -21,24 +21,29 @@ wandb_log: True
 # MAE Config
 tube_start_masking_ratio: 0.95
 tube_end_masking_ratio: 0.95
-decoder_mask_ratio: 0.
+decoder_mask_ratio: 0.85
 
 # Model Config
 patch_size: 8
-frame_patch_size: 1
+frame_patch_size: 4
 use_rope_emb: False
 masking_strategy: "MNI"
 
+# ViT Config
+encoder_model: "vit_base"
+decoder_model: "vit_small"
+
 # Mamba config
-embed_dim: 512
-depth: 32
+#embed_dim: 512
+#depth: 32
 
 # Data Config
 img_size: [88, 104, 72] # Image Size
 num_frames: 4
-is_s3: True
+is_s3: False
 # 000495.tar is missing??
-train_urls: ["s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000000..000494}.tar","s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000496..000740}.tar"]
+train_urls: ["/weka/proj-fmri/shared/NSD_MNI_wds/{000000..000738}.tar"]
+# train_urls: ["s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000000..000494}.tar","s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000496..000740}.tar"]
 
 #"/weka/proj-fmri/paulscotti/old_fMRI-foundation-model/dataset_creation/wds_creation/wds/000000.tar"
 #"s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000000..000740}.tar"

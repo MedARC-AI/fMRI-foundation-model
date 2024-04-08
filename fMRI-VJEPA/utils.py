@@ -9,7 +9,6 @@ from PIL import Image
 from skimage import filters
 from torchvision import transforms
 import nibabel as nib
-<<<<<<< HEAD
 import math
 
 def _no_grad_trunc_normal_(tensor, mean, std, a, b):
@@ -47,12 +46,6 @@ def trunc_normal_(tensor, mean=0., std=1., a=-2., b=2.):
     # type: (Tensor, float, float, float, float) -> Tensor
     return _no_grad_trunc_normal_(tensor, mean, std, a, b)
     
-=======
-from nilearn import plotting
-import matplotlib.pyplot as plt
-import re
-
->>>>>>> main
 def my_split_by_node(urls): return urls
 
 def is_interactive():
@@ -60,10 +53,6 @@ def is_interactive():
 
     return not hasattr(main, "__file__")
 
-<<<<<<< HEAD
-=======
-def my_split_by_node(urls): return urls
->>>>>>> main
 
 def seed_everything(seed=0, cudnn_deterministic=True):
     random.seed(seed)
@@ -168,10 +157,6 @@ class DataPrepper:
         return func, pos_patches
 
 
-<<<<<<< HEAD
-
-=======
->>>>>>> main
 def plot_slices(unpatches):
     if unpatches.ndim == 5:
         unpatches = unpatches[0]
@@ -207,7 +192,6 @@ def contrastive_loss(
         + torch.nn.functional.cross_entropy(feat2, labels)
     ) / 2
     return loss
-<<<<<<< HEAD
     
 def covariance_loss(x):
     """
@@ -226,9 +210,6 @@ def covariance_loss(x):
     loss = covariance_matrix[..., non_diag_mask].pow(2).sum(-1) / features_dim
     return loss.mean()
     
-=======
-
->>>>>>> main
 ### MindEye functions ###
 
 def soft_clip_loss(preds, targs, temp=0.006):
@@ -303,9 +284,6 @@ def torch_to_Image(x):
 
 def get_masking_ratio(current_epoch, total_epochs, start_masking_ratio, end_masking_ratio):
     """Returns the masking ratio for the current epochs. Linearly increase the masking ratio over the span of the training"""
-<<<<<<< HEAD
-    return start_masking_ratio + (end_masking_ratio-start_masking_ratio) * ((current_epoch+1)/total_epochs)
-=======
     return start_masking_ratio + (end_masking_ratio-start_masking_ratio) * ((current_epoch+1)/total_epochs)
 
 def view_brain(data):
@@ -339,4 +317,3 @@ def print_cuda_memory_usage():
     reserved = torch.cuda.memory_reserved()
     print(f"Allocated memory: {allocated / 1e9} GB")
     print(f"Reserved memory: {reserved / 1e9} GB")
->>>>>>> main

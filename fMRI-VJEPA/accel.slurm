@@ -1,17 +1,11 @@
 #!/bin/bash
 #SBATCH --account=fmri
-<<<<<<< HEAD
-#SBATCH --partition=a40x
-#SBATCH --job-name=vjepa#SBATCH --nodes=1              
-#SBATCH --gres=gpu:1
-=======
 #SBATCH --partition=a40
 #SBATCH --job-name=fmri_jepa
 #SBATCH --nodes=1  
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:1
 #SBATCH --gpus-per-task=1       # Set to equal gres=gpu:#!
->>>>>>> main
 #SBATCH --time=20:00:00         # total run time limit (HH:MM:SS)
 #SBATCH -e slurms/%j.err        # first create a "slurms" folder in current directory to store logs
 #SBATCH -o slurms/%j.out
@@ -19,29 +13,6 @@
 #SBATCH --no-requeue
 #SBATCH --exclusive
 
-<<<<<<< HEAD
-export NUM_GPUS=1  # Set to equal gres=gpu:#!
-
-
-module purge
-module load anaconda3/2024.2
-conda activate fmri
-
-cd /scratch/gpfs/ks9249/fMRI-foundation-model/fMRI-VJEPA/
-jupyter nbconvert main.ipynb --to python
-
-# Make sure another job doesnt use same port, here using random number
-export MASTER_PORT=$((RANDOM % (19000 - 11000 + 1) + 11000)) 
-export HOSTNAMES=$(scontrol show hostnames "$SLURM_JOB_NODELIST")
-export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
-export COUNT_NODE=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | wc -l)
-echo MASTER_ADDR=${MASTER_ADDR}
-echo MASTER_PORT=${MASTER_PORT}
-echo WORLD_SIZE=${COUNT_NODE}
-
-accelerate launch --num_processes=$(($NUM_GPUS * $COUNT_NODE)) --num_machines=$COUNT_NODE --main_process_ip=$MASTER_ADDR --main_process_port=$MASTER_PORT --mixed_precision=fp16 main.py
-# srun python main.py
-=======
 export NUM_GPUS=1 # Set to equal gres=gpu:#!
 echo NUM_GPUS=$NUM_GPUS
 
@@ -92,4 +63,3 @@ if [ $? -ne 0 ]; then
   echo "Error: srun command failed. Please check the logs for more details."
   exit 1
 fi
->>>>>>> main

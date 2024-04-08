@@ -1,20 +1,4 @@
 # Model Config
-<<<<<<< HEAD
-model_name: "ME_patch8_60ep_nopretrain"
-mae_model_name: "patch8"
-
-# Training Configs
-global_batch_size: 64
-num_workers: 8
-mixed_precision: "fp16"
-num_epochs: 200
-seed: 42
-max_lr: 3.0e-4 # Keep the x.0 else will be converted to string
-num_samples_per_epoch: 512
-
-# Saving progress
-ckpt_saving: True
-=======
 model_name: "jepa_NOpretrain_bs8_xc"
 mae_model_name: "s3_jepa_mini_4gpu_b2"
 
@@ -28,18 +12,12 @@ max_lr: 3.0e-4 # Keep the x.0 else will be converted to string
 
 # Saving progress
 ckpt_saving: False
->>>>>>> main
 ckpt_interval: 50
 resume_from_ckpt: False
 wandb_log: True
 
 # Model Config
-<<<<<<< HEAD
-#in_dim: 409600
-in_dim: 786432
-=======
 in_dim: 1236480
->>>>>>> main
 hidden_dim: 512
 drop: .15
 mixup_pct: 0.33
@@ -48,8 +26,4 @@ mixup_pct: 0.33
 nsd_wds_path: "/weka/proj-fmri/shared/mindeyev2_dataset/wds"
 nsd_raw_path: "/weka/proj-fmri/shared/mindeyev2_dataset"
 nsd_image_path: "/weka/proj-fmri/shared/mindeyev2_dataset"
-<<<<<<< HEAD
-num_sessions: 10
-=======
 num_sessions: 5
->>>>>>> main

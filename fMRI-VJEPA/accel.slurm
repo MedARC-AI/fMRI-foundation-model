@@ -13,8 +13,12 @@
 
 export NUM_GPUS=1  # Set to equal gres=gpu:#!
 
-source ~/.bashrc
-cd /weka/proj-fmri/ks9249/fMRI-foundation-model/fMRI-VJEPA/
+
+module purge
+module load anaconda3/2024.2
+conda activate fmri
+
+cd /scratch/gpfs/ks9249/fMRI-foundation-model/fMRI-VJEPA/
 jupyter nbconvert main.ipynb --to python
 
 # Make sure another job doesnt use same port, here using random number

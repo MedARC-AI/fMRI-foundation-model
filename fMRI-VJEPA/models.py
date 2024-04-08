@@ -35,13 +35,13 @@ def posemb_sincos_4d(patches, temperature=10000, dtype=torch.float32):
 
 
 class FeedForward(nn.Module):
-    def __init__(self, dim, hidden_dim):
+    def __init__(self, embed_dim, hidden_dim):
         super().__init__()
         self.net = nn.Sequential(
-            nn.LayerNorm(dim),
-            nn.Linear(dim, hidden_dim),
+            nn.LayerNorm(embed_dim),
+            nn.Linear(embed_dim, hidden_dim),
             nn.GELU(),
-            nn.Linear(hidden_dim, dim),
+            nn.Linear(hidden_dim, embed_dim),
         )
 
     def forward(self, x):
@@ -51,35 +51,48 @@ class FeedForward(nn.Module):
 class Attention(nn.Module):
     def __init__(
         self,
-        dim: int,
-        heads: int = 8,
+        embed_dim: int,
+        num_heads: int = 8,
         dim_head: int = 64,
         use_rope: bool = False,
         cls_token: bool = False,
     ):
         super().__init__()
-        inner_dim = dim_head * heads
-        self.heads = heads
+        inner_dim = dim_head * num_heads
+        self.num_heads = num_heads
         self.scale = dim_head**-0.5
         self.use_rope = use_rope
         self.cls_token = cls_token
-        self.norm = nn.LayerNorm(dim)
+        self.norm = nn.LayerNorm(embed_dim)
 
         self.attend = nn.Softmax(dim=-1)
 
-        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias=False)
-        self.to_out = nn.Linear(inner_dim, dim, bias=False)
+        self.to_qkv = nn.Linear(embed_dim, inner_dim * 3, bias=False)
+        self.to_out = nn.Linear(inner_dim, embed_dim, bias=False)
 
     def forward(
         self,
         x: torch.Tensor,
         pos_embed: Optional[nn.Module],
         mask: Optional[torch.Tensor] = None,
+        ridge: Optional[torch.Tensor] = None,
+        nn_emb: Optional[torch.Tensor] = None,
+        nn_patch: Optional[torch.Tensor] = None,
     ):
+        if ridge is not None:
+            for ir,r in enumerate(ridge):
+                x[ir] = r(x[ir])
+        
         x = self.norm(x)
 
+        if nn_emb is not None:
+            x *= nn_emb
+
+        if nn_patch is not None:
+            x += nn_patch
+
         qkv = self.to_qkv(x).chunk(3, dim=-1)
-        q, k, v = map(lambda t: rearrange(t, "b n (h d) -> b h n d", h=self.heads), qkv)
+        q, k, v = map(lambda t: rearrange(t, "b n (h d) -> b h n d", h=self.num_heads), qkv)
         if self.use_rope:
             if pos_embed is None:
                 raise ValueError(
@@ -100,6 +113,9 @@ class Attention(nn.Module):
 
         dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
 
+        # print("q", q.shape) # B num_heads N D
+        # print("k_T", k.transpose(-1, -2).shape)
+        # print("dots", dots.shape) # B num_heads N N
         attn = self.attend(dots)
 
         out = torch.matmul(attn, v)
@@ -110,9 +126,9 @@ class Attention(nn.Module):
 class Transformer(nn.Module):
     def __init__(
         self,
-        dim: int,
+        embed_dim: int,
         depth: int,
-        heads: int,
+        num_heads: int,
         dim_head: int,
         mlp_dim: int,
         use_rope: bool = False,
@@ -121,22 +137,25 @@ class Transformer(nn.Module):
         grid_depth: Optional[int] = None,
         grid_time: Optional[int] = None,
         cls_token: bool = False,
+        **args,
     ):
         super().__init__()
-        self.norm = nn.LayerNorm(dim)
+        self.embed_dim = embed_dim
+        self.mlp_dim = mlp_dim
+        self.norm = nn.LayerNorm(embed_dim)
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(
                 nn.ModuleList(
                     [
                         Attention(
-                            dim,
-                            heads=heads,
+                            embed_dim,
+                            num_heads=num_heads,
                             dim_head=dim_head,
                             use_rope=use_rope,
                             cls_token=cls_token,
                         ),
-                        FeedForward(dim, mlp_dim),
+                        FeedForward(embed_dim, mlp_dim),
                     ]
                 )
             )
@@ -155,7 +174,9 @@ class Transformer(nn.Module):
         for attn, ff in self.layers:
             x = (
                 attn(
-                    x, pos_embed=self.rope_pos_emb if self.use_rope else None, mask=mask
+                    x, 
+                    pos_embed=self.rope_pos_emb if self.use_rope else None,
+                    mask=mask,
                 )
                 + x
             )
@@ -167,30 +188,34 @@ class SimpleViT(nn.Module):
     def __init__(
         self,
         *,
+        x_encoder,
+        y_encoder,
+        predictor,
         image_size,
         image_patch_size,
-        frames,
+        num_frames,
         frame_patch_size,
-        dim,
-        depth,
-        heads,
-        mlp_dim,
-        channels,
-        dim_head=64,
+        channels=1,
         use_rope_emb: bool = False,
-        use_cls_token: bool = False
+        use_cls_token: bool = False,
     ):
         super().__init__()
         image_depth, image_height, image_width = image_size
         patch_depth, patch_height, patch_width = image_patch_size
 
+        self.x_encoder = x_encoder
+        self.y_encoder = y_encoder
+        self.predictor = predictor
+        
         # Check divisibility
         assert (image_depth % patch_depth == 0 and image_height % patch_height == 0 and image_width % 
                 patch_width == 0), "Image dimensions must be divisible by the patch size."
-        assert (frames % frame_patch_size == 0), "Frames must be divisible by the frame patch size"
+        assert (num_frames % frame_patch_size == 0), "num_frames must be divisible by the frame patch size"
 
         self.patch_dim = channels * patch_depth * patch_height * patch_width * frame_patch_size
 
+        self.num_patches = image_size[0]//image_patch_size[0] * image_size[1]//image_patch_size[1] * image_size[2]//image_patch_size[2] * num_frames
+        
         self.patchify = Rearrange(
             "b c (f pf) (d pd) (h ph) (w pw) -> b f d h w (pd ph pw pf c)",
             pd=patch_depth,
@@ -215,70 +240,27 @@ class SimpleViT(nn.Module):
 
         self.patch_to_emb = nn.Sequential(
             nn.LayerNorm(self.patch_dim),
-            nn.Linear(self.patch_dim, dim),
-            nn.LayerNorm(dim),
-        )
-
-        self.xencoder_transformer = Transformer(
-            dim,
-            depth,
-            heads,
-            dim_head,
-            mlp_dim,
-            use_rope=use_rope_emb,
-            grid_time=frames // frame_patch_size,
-            grid_depth=image_depth // patch_depth,
-            grid_height=image_height // patch_height,
-            grid_width=image_width // patch_width,
-            cls_token=use_cls_token,
-        )
-        self.yencoder_transformer = Transformer(
-            dim,
-            depth,
-            heads,
-            dim_head,
-            mlp_dim,
-            use_rope=use_rope_emb,
-            grid_time=frames // frame_patch_size,
-            grid_depth=image_depth // patch_depth,
-            grid_height=image_height // patch_height,
-            grid_width=image_width // patch_width,
-            cls_token=use_cls_token,
-        )
-        self.predictor_transformer = Transformer(
-            dim,
-            depth,
-            heads,
-            dim_head,
-            mlp_dim,
-            use_rope=use_rope_emb,
-            grid_time=frames // frame_patch_size,
-            grid_depth=image_depth // patch_depth,
-            grid_height=image_height // patch_height,
-            grid_width=image_width // patch_width,
-            cls_token=use_cls_token,
-        )
-            
+            nn.Linear(self.patch_dim, self.x_encoder.embed_dim),
+            nn.LayerNorm(self.x_encoder.embed_dim),
+        )            
 
         self.use_rope_emb = use_rope_emb
         if not self.use_rope_emb:
             self.posemb_sincos_4d = posemb_sincos_4d(
                 torch.zeros(
                     1,
-                    frames,
+                    num_frames,
                     image_depth // patch_depth,
                     image_height // patch_height,
                     image_width // patch_width,
-                    dim,
+                    self.x_encoder.embed_dim,
                 )
-            )
+            )        
 
-        self.encoder_to_decoder = nn.Linear(dim, mlp_dim, bias=False)
-        self.mask_token = nn.Parameter(torch.zeros(1, 1, mlp_dim))
-        # cls token
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, self.x_encoder.embed_dim))
         self.use_cls_token = use_cls_token
         if use_cls_token:
-            self.cls_token = nn.Parameter(torch.zeros(1, 1, mlp_dim))
+            self.cls_token = nn.Parameter(torch.zeros(1, 1, self.x_encoder.embed_dim))
 
     def forward(self, x, encoder_mask=None, encoder_type=None, verbose=False):
         if encoder_type == "x": # X ENCODER
@@ -297,8 +279,8 @@ class SimpleViT(nn.Module):
             if self.use_cls_token:
                 cls_tokens = self.cls_token.expand(len(x), -1, -1)
                 x = torch.cat((cls_tokens, x), dim=1)
-            if verbose: print("after masking", x.shape)
-            x = self.xencoder_transformer(x, mask=encoder_mask if self.use_rope_emb else None)
+            if verbose: print("input to x_encoder:", x.shape)
+            x = self.x_encoder(x, mask=encoder_mask if self.use_rope_emb else None)
             if verbose: print("final shape", x.shape)
             
         elif encoder_type == "y": # Y ENCODER
@@ -312,16 +294,16 @@ class SimpleViT(nn.Module):
             if not self.use_rope_emb:
                 if verbose: print("positional embedding", self.posemb_sincos_4d.shape)
                 x = x + self.posemb_sincos_4d.to(x.device)
-            
-            x = self.yencoder_transformer(x, mask=encoder_mask if self.use_rope_emb else None)
+            if verbose: print("input to y_encoder:", x.shape)
+            x = self.y_encoder(x, mask=encoder_mask if self.use_rope_emb else None)
             if verbose: print("after encoder", x.shape)
             if encoder_mask is not None:
                 x = x[:, ~encoder_mask]
-            if verbose: print("keeping masked tokens", x.shape)
+                if verbose: print("only use masked tokens", x.shape)
+            if verbose: print("final shape", x.shape)
             
         else:  # PREDICTOR
             if verbose: print("input shape", x.shape)
-            #x = self.encoder_to_decoder(x)
             B, X, _ = x.shape
             masked_tokens = ~encoder_mask
             N = masked_tokens.sum()
@@ -330,14 +312,12 @@ class SimpleViT(nn.Module):
                 pos_embed = self.posemb_sincos_4d.to(x.device)
                 if verbose: print("positional embedding", pos_embed.shape)
                 pos_emd_mask = pos_embed[masked_tokens]
-                if verbose: print("masked tokens", pos_emd_mask.shape)
+                if verbose: print("pos_emd_mask", pos_emd_mask.shape)
                 if self.use_cls_token:
                     cls_tokens = x[:,:1,:]
                     x = x[:,1:,:]
-                #x = torch.cat([x + pos_emd_encoder, 
-                               #self.mask_token.repeat(B, N, 1) + pos_emd_decoder], 
-                              #dim=1)
-                x= torch.cat([x , self.mask_token.repeat(B, N, 1)+ pos_emd_mask], dim=1)
+                x = torch.cat([x, 
+                        self.mask_token.repeat(B, N, 1) + pos_emd_mask], dim=1)
                 if self.use_cls_token:
                     x = torch.cat([cls_tokens, x], dim=1)
             else:
@@ -345,7 +325,9 @@ class SimpleViT(nn.Module):
                 # No abs positional embeddings for RoPE
                 x = torch.cat([x,self.mask_token.repeat(B, N - 1 if self.use_cls_token else N, 1)],dim=1)
             if verbose: print("concatenation", x.shape)
-            x = self.predictor_transformer(x, mask=mask)
+            if verbose: print("input to predictor:", x.shape)
+            x = self.predictor(x, mask=mask)
+            if verbose: print("only use masked tokens", x.shape)
             x = x[:, X:X+N, :]
-            if verbose: print("after transformer", x.shape)
+            if verbose: print("final shape", x.shape)
         return x

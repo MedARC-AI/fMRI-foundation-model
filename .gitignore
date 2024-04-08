@@ -4,5 +4,5 @@ data
 **/__pycache__/
 **/cache/
 **/ckpts/
-**/sls/
+**/slurms/
 **/wandb/

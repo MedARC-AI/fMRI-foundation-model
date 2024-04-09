@@ -16,11 +16,6 @@ The SimpleViT model currently used in VidMAE is revised to support three transfo
     
 The model is trained on an L1 loss comparing the outputs of the Y-encoder and the Predictor. The Y-Encoder is trained through an exponential moving average of the X-Encoder (using a momentum scheduler) to prevent representation collapse (see paper Section 3.1).
 
-## Results
-
-Pretrain and Downstrea results can be seen in the following projects folder:
-https://stability.wandb.io/ks9249/projects
-
 ## Contributing
 
 Pull requests are welcome. The majority of the preprocessing metrics are identical to the MAE implementation and it would be useful to compare to the VJEPA codebase to find improvements (specifically in masking where VJEPA used a concept of short-range/long-range masks).

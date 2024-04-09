@@ -1,24 +1,31 @@
 #!/bin/bash
-#SBATCH --account=fmri
-#SBATCH --partition=a40
 #SBATCH --job-name=fmri_jepa
-#SBATCH --nodes=1  
+#SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1        # cpu-cores per task (>1 if multi-threaded tasks)
 #SBATCH --gres=gpu:1
 #SBATCH --gpus-per-task=1       # Set to equal gres=gpu:#!
+#SBATCH --partition=mig
+#SBATCH --mem=5G
 #SBATCH --time=20:00:00         # total run time limit (HH:MM:SS)
 #SBATCH -e slurms/%j.err        # first create a "slurms" folder in current directory to store logs
 #SBATCH -o slurms/%j.out
 #SBATCH --comment=medarc
 #SBATCH --no-requeue
 #SBATCH --exclusive
+#SBATCH --mail-type=begin        # send email when job begins
+#SBATCH --mail-type=end          # send email when job ends
+#SBATCH --mail-type=fail         # send email if job fails
+#SBATCH --mail-user=ks9249@princeton.edu
 
 export NUM_GPUS=1 # Set to equal gres=gpu:#!
 echo NUM_GPUS=$NUM_GPUS
 
-source ~/.bashrc
+module purge
+module load anaconda3/2024.2
+conda activate fmri
 
-cd /weka/proj-fmri/paulscotti/fMRI-foundation-model/fMRI-VJEPA/
+cd /scratch/gpfs/ks9249/fMRI-foundation-model/fMRI-VJEPA/
 jupyter nbconvert main.ipynb --to python
 if [ $? -ne 0 ]; then
   echo "Error: Conversion of ipynb to Python failed. Exiting."
@@ -33,31 +40,7 @@ echo MASTER_ADDR=${MASTER_ADDR}
 echo MASTER_PORT=${MASTER_PORT}
 echo WORLD_SIZE=$((${SLURM_NNODES} * ${NUM_GPUS}))
 
-# Other settings relevant for multi-node
-export NCCL_DEBUG=WARN #INFO
-export NCCL_PROTO=simple
-export FI_EFA_USE_DEVICE_RDMA=1
-export FI_EFA_FORK_SAFE=1
-export FI_LOG_LEVEL=1
-export PYTHONFAULTHANDLER=1
-export CUDA_LAUNCH_BLOCKING=0
-export OMPI_MCA_mtl_base_verbose=1
-export FI_EFA_ENABLE_SHM_TRANSFER=0
-export FI_PROVIDER=efa
-export FI_EFA_TX_MIN_CREDITS=64
-export NCCL_TREE_THRESHOLD=0
-export TORCH_DISTRIBUTED_DEBUG=DETAIL
-export NCCL_P2P_DISABLE=1
-module load openmpi cuda/12.1
-
-srun torchrun \
---nproc_per_node=$NUM_GPUS \
---nnodes=$SLURM_NNODES \
---rdzv_id=$SLURM_JOBID \
---rdzv_backend=c10d \
---rdzv_endpoint=${MASTER_ADDR}:$MASTER_PORT \
---rdzv_conf=timeout=90 \
-main.py
+srun python main.py
 
 if [ $? -ne 0 ]; then
   echo "Error: srun command failed. Please check the logs for more details."

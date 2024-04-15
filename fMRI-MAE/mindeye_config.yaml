@@ -1,6 +1,6 @@
 # Model Config
-model_name: "pretrain_framepatchsize4"
-mae_model_name: "framepatchsize4_bs8_300ep"
+model_name: "downstream_framepatchsize4_bs8_300ep_contr_nolinear"
+mae_model_name: "framepatchsize1_4gpu_bs8_300ep_NEWcont_3e8_norm_rope_LONG"
 
 # Training Configs
 global_batch_size: 32
@@ -15,13 +15,13 @@ multisubject_ckpt: None
 ckpt_saving: False
 ckpt_interval: 99
 resume_from_ckpt: False
-wandb_log: True
+wandb_log: False
 
 # Model Config
-in_dim: 370176
-hidden_dim: 512
+in_dim: 393216
+hidden_dim: 2056
 drop: .15
-mixup_pct: 0.33
+mixup_pct: 0.00
 
 # Data Config
 nsd_wds_path: "/weka/proj-fmri/shared/mindeyev2_dataset/wds"

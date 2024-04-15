@@ -1,25 +1,25 @@
 #!/bin/bash
 #SBATCH --account=fmri
-#SBATCH --partition=a40
-#SBATCH --job-name=fmrimamba
+#SBATCH --partition=h80i
+#SBATCH --job-name=found
 #SBATCH --ntasks-per-node=1
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:1
-#SBATCH --gpus-per-task=1       # Set to equal gres=gpu:#!
-#SBATCH --time=20:00:00         # total run time limit (HH:MM:SS)
+#SBATCH --gres=gpu:4
+#SBATCH --gpus-per-task=4       # Set to equal gres=gpu:#!
+#SBATCH --time=35:00:00         # total run time limit (HH:MM:SS)
 #SBATCH -e slurms/%j.err        # first create a "slurms" folder in current directory to store logs
 #SBATCH -o slurms/%j.out
 #SBATCH --comment=medarc
 #SBATCH --no-requeue
-#SBATCH --exclusive
+#SBATCH --exclude=ip-10-0-142-178
 
-export NUM_GPUS=1 # Set to equal gres=gpu:#!
+export NUM_GPUS=4 # Set to equal gres=gpu:#!
 echo NUM_GPUS=$NUM_GPUS
 
 source ~/.bashrc
 
 cd /weka/proj-fmri/paulscotti/fMRI-foundation-model/fMRI-MAE/
-jupyter nbconvert mamba.ipynb --to python
+jupyter nbconvert main.ipynb --to python
 if [ $? -ne 0 ]; then
   echo "Error: Conversion of ipynb to Python failed. Exiting."
   exit 1
@@ -57,7 +57,7 @@ srun torchrun \
 --rdzv_backend=c10d \
 --rdzv_endpoint=${MASTER_ADDR}:$MASTER_PORT \
 --rdzv_conf=timeout=90 \
-mamba.py
+main.py
 
 if [ $? -ne 0 ]; then
   echo "Error: srun command failed. Please check the logs for more details."

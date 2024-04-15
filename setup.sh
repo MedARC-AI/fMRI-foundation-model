@@ -12,7 +12,7 @@ pip install numpy matplotlib jupyter jupyterlab_nvdashboard jupyterlab scipy tqd
 
 pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
-# pip install torch==2.0.1 torchvision==0.15.2 --index-url https://download.pytorch.org/whl/cu117 --no-deps
+# pip install torch==2.1.0 torchvision==0.15.2 --index-url https://download.pytorch.org/whl/cu121 --no-deps
 
 # If you are using Stability HPC then do this (may need to fix the absolute path to .whl):
 # pip install fMRI-foundation-model/torchdata_whl/torchdata-0.5.1+cb9ed24-cp310-cp310-linux_x86_64.whl

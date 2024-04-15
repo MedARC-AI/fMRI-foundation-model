@@ -242,7 +242,8 @@ class VisionTransformerMAE(nn.Module):
                 )
             )
 
-        self.encoder_to_decoder = nn.Linear(self.encoder_embed_dim, self.decoder_embed_dim, bias=False)
+        if self.encoder_embed_dim != self.decoder_embed_dim:
+            self.encoder_to_decoder = nn.Linear(self.encoder_embed_dim, self.decoder_embed_dim, bias=False)
         self.mask_token = nn.Parameter(torch.zeros(1, 1, self.decoder_embed_dim))
 
         # cls token
@@ -265,7 +266,6 @@ class VisionTransformerMAE(nn.Module):
             if verbose: print("patched_emb", x.shape)
             x = rearrange(x, "b ... d -> b (...) d")
             if verbose: print("reshaped", x.shape)
-            
             if not self.use_rope_emb:
                 if verbose: print("pe", self.posemb_sincos_4d.shape)
                 x = x + self.posemb_sincos_4d.to(x.device)
@@ -279,16 +279,18 @@ class VisionTransformerMAE(nn.Module):
             if verbose: print(x.shape)
         else:  # DECODER
             if verbose: print(x.shape)
-            x = self.encoder_to_decoder(x.to(device))
-            if verbose: print("Linear", x.shape)
+            if self.encoder_embed_dim != self.decoder_embed_dim:
+                x = self.encoder_to_decoder(x.to(device))
+                if verbose: print("Linear", x.shape)
             B, _, _ = x.shape
             N = decoder_mask.sum()
             mask = None
             if not self.use_rope_emb:
                 pos_embed = self.posemb_sincos_4d.to(x.device)
                 if verbose: print("pe", pos_embed.shape)
-                pos_embed = self.encoder_to_decoder(pos_embed)
-                if verbose: print("Linear pe", pos_embed.shape)
+                if self.encoder_embed_dim != self.decoder_embed_dim:
+                    pos_embed = self.encoder_to_decoder(pos_embed)
+                    if verbose: print("Linear pe", pos_embed.shape)
                 pos_emd_encoder = pos_embed[encoder_mask]
                 pos_emd_decoder = pos_embed[decoder_mask]
                 if verbose: print("pos_emd_encoder", pos_emd_encoder.shape)

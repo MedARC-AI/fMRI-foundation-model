@@ -103,6 +103,8 @@ class DataPrepper:
         timepoints = np.arange(start_timepoint, start_timepoint + self.num_frames)
 
         func = func[:,timepoints]
+        
+        # func = func[:,:,:,30:31]
 
         if self.masking_strategy=="MNI":
             return func, None

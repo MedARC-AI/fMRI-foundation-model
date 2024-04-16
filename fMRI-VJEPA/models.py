@@ -302,7 +302,7 @@ class SimpleViT(nn.Module):
                     if verbose: print("positional embedding", self.posemb_sincos_4d.shape)
                     x = x + self.posemb_sincos_4d.to(x.device)
                 if verbose: print("input to y_encoder:", x.shape)
-                x = self.y_encoder(x, mask=encoder_mask if self.use_rope_emb else None)
+                x = self.y_encoder(x, mask=None if self.use_rope_emb else None)
                 if verbose: print("after encoder", x.shape)
                 # apply layer_norm to output of yencoder to ensure no drifting
                 x = torch.nn.functional.layer_norm(x, (x.size(-1),))  # normalize over feature-dim  [B, N, D]

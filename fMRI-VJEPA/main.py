@@ -3,7 +3,7 @@
 
 # # Configuration
 
-# In[ ]:
+# In[1]:
 
 
 # Import packages and setup gpu configuration.
@@ -124,7 +124,7 @@ print("PID of this process =",os.getpid())
 print("device =", device, "distributed =",distributed, "num_devices =", num_devices, "local rank =", local_rank, "world size =", world_size, "data_type =", data_type)
 
 
-# In[ ]:
+# In[2]:
 
 
 print(config)
@@ -158,7 +158,7 @@ print("num_decoder_patches", num_decoder_patches)
 
 # # Test to Check Model Architecture
 
-# In[ ]:
+# In[3]:
 
 
 image_depth, image_height, image_width = image_size
@@ -216,7 +216,7 @@ print("predictor")
 print(utils.count_params(predictor))
 
 
-# In[ ]:
+# In[4]:
 
 
 model = SimpleViT(
@@ -235,7 +235,7 @@ model = model.to(device)
 utils.count_params(model)
 
 
-# In[ ]:
+# In[5]:
 
 
 aug_transform = utils.DataPrepper(
@@ -289,19 +289,16 @@ if not distributed:
     print("input_func", input_func.shape)
 
 
-# In[ ]:
+# In[11]:
 
 
-encoder_parameters = [
-    {'params': (p for n, p in model.x_encoder.named_parameters() if ('bias' not in n) and (len(p.shape) != 1))},
+parameters = [
+    {'params': (p for n, p in model.x_encoder.named_parameters() if ('bias' not in n) and (len(p.shape) != 1)), 'lr': 0.00003},
     {'params': (p for n, p in model.x_encoder.named_parameters() if ('bias' in n) or (len(p.shape) == 1)), 
-     'WD_exclude': True,'weight_decay': 0,},
-]
-
-predictor_parameters = [
-     {'params': (p for n, p in model.predictor.named_parameters() if ('bias' not in n) and (len(p.shape) != 1))},
+     'WD_exclude': True,'weight_decay': 0,'lr': 0.00003},
+        {'params': (p for n, p in model.predictor.named_parameters() if ('bias' not in n) and (len(p.shape) != 1)),'lr': 0.0003},
     {'params': (p for n, p in model.predictor.named_parameters() if ('bias' in n) or (len(p.shape) == 1)), 
-     'WD_exclude': True,'weight_decay': 0,},
+     'WD_exclude': True,'weight_decay': 0,'lr': 0.0003},
 ]
 
     
@@ -326,9 +323,8 @@ for p in model.y_encoder.parameters():
     
     
 #optimizer = torch.optim.AdamW(opt_grouped_parameters)
-encoder_optimizer = torch.optim.AdamW(encoder_parameters,lr=0.00003)
-predictor_optimizer = torch.optim.AdamW(predictor_parameters,lr=0.0003)
-
+#predictor_optimizer = torch.optim.AdamW(predictor_parameters,lr=0.0003)
+optimizer = torch.optim.AdamW(parameters)
 
 num_iterations_per_epoch = num_samples_per_epoch // global_batch_size
 print("num_iterations_per_epoch", num_iterations_per_epoch)
@@ -529,9 +525,7 @@ for epoch in progress_bar:
     with torch.cuda.amp.autocast(dtype=data_type):
         model.train()
         for train_i, batch in enumerate(train_dl):
-            #optimizer.zero_grad()
-            encoder_optimizer.zero_grad()
-            predictor_optimizer.zero_grad()
+            optimizer.zero_grad()
             
             input_func = batch['func.npy']
             
@@ -602,9 +596,8 @@ for epoch in progress_bar:
             # clip gradient
             #torch.nn.utils.clip_grad_norm_(model.x_encoder.parameters(), 1)
             #torch.nn.utils.clip_grad_norm_(model.predictor.parameters(), 1)
-            #optimizer.step()
-            encoder_optimizer.step()
-            predictor_optimizer.step()
+            optimizer.step()
+            
             #lr_scheduler.step()
 
             

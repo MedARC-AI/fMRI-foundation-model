@@ -193,22 +193,6 @@ def contrastive_loss(
     ) / 2
     return loss
     
-def covariance_loss(x):
-    """
-    Parameters:
-        x (Tensor): The input tensor of shape (batch_size, ..., features_dimension).
-
-    Returns:
-        Tensor: The computed covariance loss.
-    """
-    # Center the tensor by subtracting its mean
-    x_centered = x - x.mean(dim=0)
-    batch_size = x_centered.size(0)
-    features_dim = x_centered.size(-1)
-    non_diag_mask = ~torch.eye(features_dim, device=x.device, dtype=torch.bool)
-    covariance_matrix = torch.einsum("b...i,b...j->...ij", x_centered, x_centered) / (batch_size - 1)
-    loss = covariance_matrix[..., non_diag_mask].pow(2).sum(-1) / features_dim
-    return loss.mean()
     
 ### MindEye functions ###
 

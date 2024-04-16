@@ -1,11 +1,11 @@
 # Model Config
-model_name: "run_batch=2_newscheduler+weightinit"
+model_name: "split_lr_narrowpredictor_gradientmonitor_v5"
 use_cls_token: False
 use_contrastive_loss: False
 constrastive_loss_weight: 1.0
 
 # Training Configs
-batch_size: 2
+batch_size: 4
 num_workers: 1
 num_epochs: 300
 seed: 42
@@ -18,7 +18,7 @@ ema:
   - 0.998
   - 1.0
 ipe_scale: 1.25
-reg_coeff: 0.0
+reg_coeff: 0
 
 # Saving progress
 ckpt_saving: True
@@ -30,28 +30,21 @@ wandb_log: True
 x_encoder_start_masking_ratio: 0.85
 x_encoder_end_masking_ratio: 0.85
 y_encoder_mask_ratio: 0.85
-patch_size: 8
-frame_patch_size: 1
 use_rope_emb: False
 masking_strategy: "MNI"
 
 # Model Config
 depth: 12
-heads: 12
 dim: 512
-mlp_dim: 512
 patch_size: 8
-frame_patch_size: 1
+frame_patch_size: 4
 use_rope_emb: False
-num_heads: 12
-
-# ViT-Small
 embed_dim: 384
 mlp_dim: 1536
-depth: 12
-num_heads: 6
+num_heads: 12
 # dim_head = embed_dim / num_heads
-dim_head: 64
+dim_head: 32
+
 
 # Data Config
 image_size: [88, 104, 72] # Image Size

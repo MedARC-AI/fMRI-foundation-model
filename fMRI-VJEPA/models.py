@@ -9,6 +9,7 @@ from rope import RotaryPositionalEmbeddings4D
 
 def my_split_by_node(urls): return urls
 
+
 def posemb_sincos_4d(patches, temperature=10000, dtype=torch.float32):
     _, f, d, h, w, dim, device, dtype = (*patches.shape, patches.device, patches.dtype)
 
@@ -131,15 +132,25 @@ class Transformer(nn.Module):
         num_heads: int,
         dim_head: int,
         mlp_dim: int,
+        patch_dim: int,
         use_rope: bool = False,
         grid_height: Optional[int] = None,
         grid_width: Optional[int] = None,
         grid_depth: Optional[int] = None,
         grid_time: Optional[int] = None,
         cls_token: bool = False,
+        
         **args,
     ):
         super().__init__()
+
+        self.patch_to_emb = nn.Sequential(
+            nn.LayerNorm(patch_dim),
+            nn.Linear(patch_dim, embed_dim),
+            nn.LayerNorm(embed_dim),
+        ) 
+
+        
         self.embed_dim = embed_dim
         self.mlp_dim = mlp_dim
         self.norm = nn.LayerNorm(embed_dim)
@@ -236,38 +247,33 @@ class SimpleViT(nn.Module):
                 pw=patch_width,
                 pf=frame_patch_size,
             )
-        )
-
-        self.patch_to_emb = nn.Sequential(
-            nn.LayerNorm(self.patch_dim),
-            nn.Linear(self.patch_dim, self.x_encoder.embed_dim),
-            nn.LayerNorm(self.x_encoder.embed_dim),
-        )            
+        )        
 
         self.use_rope_emb = use_rope_emb
+
         if not self.use_rope_emb:
             self.posemb_sincos_4d = posemb_sincos_4d(
                 torch.zeros(
                     1,
-                    num_frames,
+                    num_frames // frame_patch_size,
                     image_depth // patch_depth,
                     image_height // patch_height,
                     image_width // patch_width,
                     self.x_encoder.embed_dim,
                 )
-            )        
+            )
 
         self.mask_token = nn.Parameter(torch.zeros(1, 1, self.x_encoder.embed_dim))
         self.use_cls_token = use_cls_token
         if use_cls_token:
             self.cls_token = nn.Parameter(torch.zeros(1, 1, self.x_encoder.embed_dim))
 
-    def forward(self, x, encoder_mask=None, encoder_type=None, verbose=False):
+    def forward(self, x, encoder_mask=None, encoder_type=None, device="cuda", verbose=False):
         if encoder_type == "x": # X ENCODER
             if verbose: print("input shape", x.shape)
             x = self.patchify(x)
             if verbose: print("after patching", x.shape)
-            x = self.patch_to_emb(x)
+            x = self.x_encoder.patch_to_emb(x.to(device))
             if verbose: print("convert to embedding", x.shape)
             x = rearrange(x, "b ... d -> b (...) d")
             if verbose: print("flattening", x.shape)
@@ -284,23 +290,26 @@ class SimpleViT(nn.Module):
             if verbose: print("final shape", x.shape)
             
         elif encoder_type == "y": # Y ENCODER
-            if verbose: print("input shape", x.shape)
-            x = self.patchify(x)
-            if verbose: print("after patching", x.shape)
-            x = self.patch_to_emb(x)
-            if verbose: print("convert to embedding", x.shape)
-            x = rearrange(x, "b ... d -> b (...) d")
-            if verbose: print("flattening", x.shape)
-            if not self.use_rope_emb:
-                if verbose: print("positional embedding", self.posemb_sincos_4d.shape)
-                x = x + self.posemb_sincos_4d.to(x.device)
-            if verbose: print("input to y_encoder:", x.shape)
-            x = self.y_encoder(x, mask=encoder_mask if self.use_rope_emb else None)
-            if verbose: print("after encoder", x.shape)
-            if encoder_mask is not None:
-                x = x[:, ~encoder_mask]
-                if verbose: print("only use masked tokens", x.shape)
-            if verbose: print("final shape", x.shape)
+            with torch.no_grad():
+                if verbose: print("input shape", x.shape)
+                x = self.patchify(x)
+                if verbose: print("after patching", x.shape)
+                x = self.y_encoder.patch_to_emb(x.to(device))
+                if verbose: print("convert to embedding", x.shape)
+                x = rearrange(x, "b ... d -> b (...) d")
+                if verbose: print("flattening", x.shape)
+                if not self.use_rope_emb:
+                    if verbose: print("positional embedding", self.posemb_sincos_4d.shape)
+                    x = x + self.posemb_sincos_4d.to(x.device)
+                if verbose: print("input to y_encoder:", x.shape)
+                x = self.y_encoder(x, mask=encoder_mask if self.use_rope_emb else None)
+                if verbose: print("after encoder", x.shape)
+                # apply layer_norm to output of yencoder to ensure no drifting
+                x = torch.nn.functional.layer_norm(x, (x.size(-1),))  # normalize over feature-dim  [B, N, D]
+                if encoder_mask is not None:
+                    x = x[:, ~encoder_mask]
+                    if verbose: print("only use masked tokens", x.shape)
+                if verbose: print("final shape", x.shape)
             
         else:  # PREDICTOR
             if verbose: print("input shape", x.shape)

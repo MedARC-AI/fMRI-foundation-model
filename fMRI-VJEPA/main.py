@@ -3,7 +3,7 @@
 
 # # Configuration
 
-# In[68]:
+# In[ ]:
 
 
 # Import packages and setup gpu configuration.
@@ -24,15 +24,10 @@ import random
 import h5py
 import webdataset as wds
 import matplotlib.pyplot as plt
-print("reached")
 import torch
-print("reached1")
 import torch.nn as nn
-print("reached2")
 import torch.nn.functional as F
-print("reached3")
 from torchvision import transforms
-print("reached4")
 import utils
 from models import *
 import nibabel as nib
@@ -110,19 +105,18 @@ if distributed:
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
     from torch.distributed.fsdp.api import BackwardPrefetch, CPUOffload, ShardingStrategy
     import functools
-    from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy
+    from torch.distributed.fsdp.wrap import size_based_auto_wrap_policy, transformer_auto_wrap_policy
     print("starting init_process_group...")
     dist.init_process_group("nccl", rank=global_rank, world_size=world_size)
     print(f"setting device to cuda:{local_rank}")
     try:
         torch.cuda.set_device(local_rank)
-        device = torch.cuda.current_device() #torch.device('cuda',local_rank)
+        device = torch.device('cuda',local_rank)
         print(f"\nSuccessfully set cuda:{local_rank} | global_rank{global_rank} | node{node}")
     except Exception as error:        
         print(f"\nFAILED TO SET DEVICE cuda:{local_rank} | global_rank{global_rank} | node{node}")
         print("An exception occurred:", error)
-    dist.barrier()
-    print("passed barrier\n")
+        
 else:
     device = torch.device('cuda')
 
@@ -130,7 +124,7 @@ print("PID of this process =",os.getpid())
 print("device =", device, "distributed =",distributed, "num_devices =", num_devices, "local rank =", local_rank, "world size =", world_size, "data_type =", data_type)
 
 
-# In[69]:
+# In[ ]:
 
 
 print(config)
@@ -164,18 +158,21 @@ print("num_decoder_patches", num_decoder_patches)
 
 # # Test to Check Model Architecture
 
-# In[70]:
+# In[ ]:
 
 
 image_depth, image_height, image_width = image_size
 image_patch_size=(patch_size,patch_size,patch_size)
 patch_depth, patch_height, patch_width = image_patch_size
+patch_dim = patch_depth * patch_height * patch_width * frame_patch_size
+
 x_encoder = Transformer(
     embed_dim,
     depth,
     num_heads,
     dim_head,
     mlp_dim,
+    patch_dim,
     use_rope=use_rope_emb,
     grid_time=num_frames // frame_patch_size,
     grid_depth=image_depth // patch_depth,
@@ -191,6 +188,7 @@ y_encoder = Transformer(
     num_heads,
     dim_head,
     mlp_dim,
+    patch_dim,
     use_rope=use_rope_emb,
     grid_time=num_frames // frame_patch_size,
     grid_depth=image_depth // patch_depth,
@@ -202,10 +200,11 @@ print("y_encoder")
 print(utils.count_params(y_encoder))
 predictor = Transformer(
     embed_dim,
-    depth,
+    depth // 2,
     num_heads,
     dim_head,
     mlp_dim,
+    patch_dim,
     use_rope=use_rope_emb,
     grid_time=num_frames // frame_patch_size,
     grid_depth=image_depth // patch_depth,
@@ -217,7 +216,7 @@ print("predictor")
 print(utils.count_params(predictor))
 
 
-# In[71]:
+# In[ ]:
 
 
 model = SimpleViT(
@@ -232,12 +231,11 @@ model = SimpleViT(
     use_rope_emb=use_rope_emb,
     use_cls_token=use_cls_token,
 )
-if not distributed:
-    model = model.to(device)
+model = model.to(device)
 utils.count_params(model)
 
 
-# In[72]:
+# In[ ]:
 
 
 aug_transform = utils.DataPrepper(
@@ -252,7 +250,7 @@ aug_transform = utils.DataPrepper(
 
 # # Model Preparation
 
-# In[73]:
+# In[ ]:
 
 
 from dataloader import create_dataset, create_loader
@@ -274,7 +272,7 @@ else:
     train_dl = create_loader(train_dp, batch_size=batch_size, num_workers=num_workers)
 
 
-# In[74]:
+# In[ ]:
 
 
 if not distributed:
@@ -291,40 +289,22 @@ if not distributed:
     print("input_func", input_func.shape)
 
 
-# In[75]:
+# In[ ]:
 
 
-if distributed:    
-    my_auto_wrap_policy = functools.partial(
-        size_based_auto_wrap_policy, min_num_params=200000
-    )
-    print(f"\nPrepping FSDP on {global_rank} {node}...\n")
-    model = FSDP(
-        model,
-        sharding_strategy=ShardingStrategy.HYBRID_SHARD,
-        auto_wrap_policy=my_auto_wrap_policy,
-        use_orig_params=False,
-        cpu_offload=None, #CPUOffload(offload_params=True)
-        sync_module_states=True,
-        limit_all_gathers=True, # See https://github.com/pytorch/pytorch/issues/91165
-        device_id=device,
-    )
-    print(f"\nSuccessfully loaded FSDP model to device on global_rank {global_rank}\n")
-    dist.barrier()
-    print(f"\nSuccessfully passed barrier! {global_rank}\n")
+encoder_parameters = [
+    {'params': (p for n, p in model.x_encoder.named_parameters() if ('bias' not in n) and (len(p.shape) != 1))},
+    {'params': (p for n, p in model.x_encoder.named_parameters() if ('bias' in n) or (len(p.shape) == 1)), 
+     'WD_exclude': True,'weight_decay': 0,},
+]
 
+predictor_parameters = [
+     {'params': (p for n, p in model.predictor.named_parameters() if ('bias' not in n) and (len(p.shape) != 1))},
+    {'params': (p for n, p in model.predictor.named_parameters() if ('bias' in n) or (len(p.shape) == 1)), 
+     'WD_exclude': True,'weight_decay': 0,},
+]
 
-# In[77]:
-
-
-no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
-opt_grouped_parameters = [
-    {'params': [p for n, p in model.x_encoder.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': 1e-2},
-    {'params': [p for n, p in model.predictor.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': 1e-2},
-    {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0},
-] #we only update the xencoder and predictor, the yencoder is updated through a moving average of the xencoder
-model.y_encoder.requires_grad_(False)
-
+    
 def init_weights(m):
     if isinstance(m, torch.nn.Linear):
         utils.trunc_normal_(m.weight, std=0.02)
@@ -341,24 +321,15 @@ for m in  model.predictor.modules():
 
 model.y_encoder = copy.deepcopy(model.x_encoder)
 
-for m in model.x_encoder.modules():
-    if isinstance(m, torch.nn.Linear):
-        print(m.weight, "h")
-        break
-
-for m in model.y_encoder.modules():
-    if isinstance(m, torch.nn.Linear):
-        print(m.weight)
-        break
-
-for m in model.predictor.modules():
-    if isinstance(m, torch.nn.Linear):
-        print(m.weight)
-        break
+for p in model.y_encoder.parameters():
+    p.requires_grad = False
     
-
     
-optimizer = torch.optim.AdamW(opt_grouped_parameters)
+#optimizer = torch.optim.AdamW(opt_grouped_parameters)
+encoder_optimizer = torch.optim.AdamW(encoder_parameters,lr=0.00003)
+predictor_optimizer = torch.optim.AdamW(predictor_parameters,lr=0.0003)
+
+
 num_iterations_per_epoch = num_samples_per_epoch // global_batch_size
 print("num_iterations_per_epoch", num_iterations_per_epoch)
 total_steps = num_epochs * num_iterations_per_epoch * num_devices
@@ -367,41 +338,44 @@ print("total_steps", total_steps)
 print("\nDone with model preparations!")
 num_params = utils.count_params(model)
 
-#momentum_scheduler = (ema[0] + i*(ema[1]-ema[0])/(num_iterations_per_epoch*num_epochs*ipe_scale)
-                          #for i in range(int(num_iterations_per_epoch*num_epochs*ipe_scale)+1))
 momentum_scheduler = (ema[0] + i*(ema[1]-ema[0])/(total_steps*ipe_scale)
                           for i in range(int(total_steps*ipe_scale)+1))
 count=0
 print("\nmomentum_scheduler set")
 
-#lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
-    #optimizer,
-    #max_lr=max_lr,
-    #total_steps=total_steps,
-#)
-
-lr_scheduler = schedulers.WarmupCosineSchedule(
-        optimizer,
-        warmup_steps=int(warmup * num_iterations_per_epoch),
-        start_lr=start_lr,
-        ref_lr=lr,
-        final_lr=final_lr,
-        T_max=int(ipe_scale * num_epochs * num_iterations_per_epoch),
-    )
-print("\nlr_scheduler set")
+#lr_scheduler = schedulers.WarmupCosineSchedule(
+        #optimizer,
+        #warmup_steps=int(warmup * num_iterations_per_epoch),
+        #start_lr=start_lr,
+        #ref_lr=lr,
+        #final_lr=final_lr,
+        #T_max=int(ipe_scale * num_epochs * num_iterations_per_epoch),
+# )
+#print("\nlr_scheduler set")
 
 
-# In[66]:
+# In[ ]:
 
 
 if masking_strategy=="MNI":
+    from einops.layers.torch import Rearrange
+    
     MNI_brain = nib.load("/scratch/gpfs/ks9249/fMRI-foundation-model/dataset_creation/afni_conversion/tpl-MNI152NLin2009cAsym_res-02_T1w_brain.nii.gz").get_fdata()
     brain_pos_voxels = MNI_brain[6:94,8:112,10:82]
-    brain_pos_pats = model.patchify(torch.Tensor(brain_pos_voxels)[None,None,None])
+    #brain_pos_pats = model.patchify(torch.Tensor(brain_pos_voxels)[None,None,None])
+    #brain_pos_pats_vit = rearrange(brain_pos_pats, "b ... d -> b (...) d").mean(-1)[0]
+    brain_pos_pats = Rearrange(
+            "b c (f pf) (d pd) (h ph) (w pw) -> b f d h w (pd ph pw pf c)",
+            pd=patch_size,
+            ph=patch_size,
+            pw=patch_size,
+            pf=1,
+        )(torch.Tensor(brain_pos_voxels)[None,None,None])
+    
     brain_pos_pats_vit = rearrange(brain_pos_pats, "b ... d -> b (...) d").mean(-1)[0]
 
 
-# In[52]:
+# In[ ]:
 
 
 default_ckpt_path = outdir+f'/last.pth'
@@ -415,7 +389,7 @@ def save_ckpt(model,tag="last"):
         torch.save({
             'epoch': epoch,
             'model_state_dict': model_states,
-            'optimizer_state_dict': optimizer.state_dict(),
+            #'optimizer_state_dict': optimizer.state_dict(),
         }, ckpt_path)
         print(f"\n---saved {ckpt_path}!---\n")
         # save config.yaml copy
@@ -427,7 +401,7 @@ def resume_ckpt(model, optimizer, device, ckpt_path=default_ckpt_path):
         checkpoint = torch.load(ckpt_path, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        lr_scheduler.load_state_dict(checkpoint['lr_scheduler_state_dict'])
+        #lr_scheduler.load_state_dict(checkpoint['lr_scheduler_state_dict'])
         epoch = checkpoint['epoch']
     else:
         epoch = 0
@@ -436,7 +410,7 @@ def resume_ckpt(model, optimizer, device, ckpt_path=default_ckpt_path):
     return model, optimizer, lr_scheduler, epoch
 
 
-# In[11]:
+# In[ ]:
 
 
 import os
@@ -495,7 +469,7 @@ else:
 
 
 epoch = 0
-lrs, recon_losses, contrastive_losses, test_losses,train_reg, test_reg = [], [], [], [], [], []
+lrs, recon_losses, contrastive_losses, train_reg, grad_norms_encoder, grad_norms_predictor, train_cos = [], [], [], [], [], [], []
 best_test_loss = 1e9
 torch.cuda.empty_cache()
 
@@ -526,19 +500,14 @@ def reg_fn(z):
 def cos_fn(z):
     # Flatten z from [batch, channels, height, width] to [batch, -1]
     z_flat = z.flatten(1)
-    
     # Compute normalized vectors to prevent division by zero
     z_norm = torch.nn.functional.normalize(z_flat, p=2, dim=1)
-    
     # Compute cosine similarity matrix
     cossim_matrix = torch.mm(z_norm, z_norm.transpose(0, 1))
-    
     # Compute the sum of cosine similarities of distinct pairs
     cossim_sum = (cossim_matrix.sum() - len(z))/2
-    
     # Compute the total number of distinct pairs
     cossim_num = len(z) * (len(z) - 1) / 2
-    
     # Return the average cosine similarity for distinct pairs
     return cossim_sum / cossim_num
 
@@ -560,8 +529,10 @@ for epoch in progress_bar:
     with torch.cuda.amp.autocast(dtype=data_type):
         model.train()
         for train_i, batch in enumerate(train_dl):
-            optimizer.zero_grad()
-
+            #optimizer.zero_grad()
+            encoder_optimizer.zero_grad()
+            predictor_optimizer.zero_grad()
+            
             input_func = batch['func.npy']
             
             if masking_strategy=="MNI":
@@ -579,34 +550,33 @@ for epoch in progress_bar:
             func = func.unsqueeze(1).to(device)
 
             # create tube mask (i.e., a mask that is the same for all frames/timepoints)
+            
             tube_mask = torch.zeros(num_patches // num_frames).to(torch.bool)
             batch_positive_approx = (brain_pos_pats_vit > 0)
             mask_idx_candidates = torch.where(batch_positive_approx)[0]
             mask_idx_candidates = mask_idx_candidates[torch.randperm(len(mask_idx_candidates))]
             tube_idx = mask_idx_candidates[:int(num_patches / num_frames * (1 - tube_mask_ratio))]
             tube_mask[tube_idx] = True
-            tube_mask = tube_mask.tile(num_frames)
-
+            tube_mask = tube_mask.tile(num_frames//frame_patch_size)
             # print("before encoder");utils.print_cuda_memory_usage()
             
             # feed into x-encoder
-            xencoder_out = model(func, encoder_mask=tube_mask, encoder_type = "x")
+            xencoder_out = model(func, encoder_mask=tube_mask, encoder_type = "x", device = device)
             # print("x_encoder");utils.print_cuda_memory_usage()
             
             # feed entire func into y-encoder
-            yencoder_out = model(func, encoder_mask=tube_mask, encoder_type = "y")
+            with torch.no_grad():
+                yencoder_out = model(func, encoder_mask=tube_mask, encoder_type = "y", device = device)
             # print("y_encoder");utils.print_cuda_memory_usage()
             
             # feed output of x-encoder into predictor
-            predictor_out = model(xencoder_out, encoder_mask=tube_mask, encoder_type="p")
+            predictor_out = model(xencoder_out, encoder_mask=tube_mask, encoder_type="p", device = device)
             # print("predictor");utils.print_cuda_memory_usage()
 
 
             # compare output of predictor to output of y-encoder and calculate L1 Loss
-            loss_jepa = l1(predictor_out,yencoder_out)  # jepa prediction loss
-            loss_reg = cos_fn(yencoder_out)
-            loss = loss_jepa + reg_coeff * loss_reg
-            #loss = l1(predictor_out,yencoder_out)
+            loss = l1(predictor_out,yencoder_out)  # jepa prediction loss
+            loss_cos = cos_fn(yencoder_out)   # cosine similarity accross batch
 
             
             # contrastive loss
@@ -617,7 +587,6 @@ for epoch in progress_bar:
                 contrastive_loss = utils.contrastive_loss(cls_token1, cls_token2, temperature=logit_scale)
                 loss += constrastive_loss_weight * contrastive_loss
                 contrastive_losses.append(contrastive_loss.item())
-
 
             
 
@@ -630,12 +599,35 @@ for epoch in progress_bar:
             
             # backwards + step
             loss.backward()
-            optimizer.step()
-            lr_scheduler.step()
-            recon_losses.append(loss.item())
-            lrs.append(optimizer.param_groups[0]["lr"])
-            train_reg.append(loss_reg.item())
+            # clip gradient
+            #torch.nn.utils.clip_grad_norm_(model.x_encoder.parameters(), 1)
+            #torch.nn.utils.clip_grad_norm_(model.predictor.parameters(), 1)
+            #optimizer.step()
+            encoder_optimizer.step()
+            predictor_optimizer.step()
+            #lr_scheduler.step()
+
             
+            recon_losses.append(loss.item())
+            #lrs.append(optimizer.param_groups[0]["lr"])
+            train_cos.append(loss_cos.item())
+
+            #calculate gradient norms to monitor for instability
+            grads_encoder = [
+                param.grad.detach().flatten()
+                for param in model.x_encoder.parameters()
+                if param.grad is not None
+            ]
+            grads_predictor = [
+                param.grad.detach().flatten()
+                for param in model.predictor.parameters()
+                if param.grad is not None
+            ]
+            norm_encoder = torch.cat(grads_encoder).norm()
+            norm_predictor = torch.cat(grads_predictor).norm()
+            grad_norms_encoder.append(norm_encoder.item())
+            grad_norms_predictor.append(norm_predictor.item())
+                
             # update y-encoder using exponential-moving average of x-encoder params to prevent collapse
             m = next(momentum_scheduler)
             with torch.no_grad():
@@ -652,10 +644,13 @@ for epoch in progress_bar:
         logs = {
             "train/loss": np.mean(recon_losses[-(train_i + 1) :]),
             "train/num_steps": len(recon_losses),
-            "lr": np.mean(lrs[-(train_i + 1) :]),
+            #"lr": np.mean(lrs[-(train_i + 1) :]),
             "epoch": epoch,
             "tube_mask_ratio": tube_mask_ratio,
-            "train/loss_reg": np.mean(train_reg[-(train_i + 1) :]),
+            #"train/loss_reg": np.mean(train_reg[-(train_i + 1) :]),
+            "train/loss_cos": np.mean(train_cos[-(train_i + 1) :]),
+            "grad_norm_encoder": np.mean(grad_norms_encoder[-(train_i + 1) :]),
+            "grad_norm_predictor": np.mean(grad_norms_predictor[-(train_i + 1) :]),
         }
         progress_bar.set_postfix(**logs)
         if distributed: print(logs)

@@ -1,5 +1,5 @@
 # Model Config
-model_name: "split_lr_narrowpredictor_gradientmonitor_v5"
+model_name: "split_lr_narrowpredictor_gradientmonitor_v7_check2"
 use_cls_token: False
 use_contrastive_loss: False
 constrastive_loss_weight: 1.0

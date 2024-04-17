@@ -553,18 +553,22 @@ for epoch in progress_bar:
             tube_mask[tube_idx] = True
             tube_mask = tube_mask.tile(num_frames//frame_patch_size)
             # print("before encoder");utils.print_cuda_memory_usage()
+
+            check = False
+            if epoch <3:
+                check = True
             
             # feed into x-encoder
-            xencoder_out = model(func, encoder_mask=tube_mask, encoder_type = "x", device = device)
+            xencoder_out = model(func, encoder_mask=tube_mask, encoder_type = "x", device = device,verbose = check)
             # print("x_encoder");utils.print_cuda_memory_usage()
             
             # feed entire func into y-encoder
             with torch.no_grad():
-                yencoder_out = model(func, encoder_mask=tube_mask, encoder_type = "y", device = device)
+                yencoder_out = model(func, encoder_mask=tube_mask, encoder_type = "y", device = device,verbose=check)
             # print("y_encoder");utils.print_cuda_memory_usage()
             
             # feed output of x-encoder into predictor
-            predictor_out = model(xencoder_out, encoder_mask=tube_mask, encoder_type="p", device = device)
+            predictor_out = model(xencoder_out, encoder_mask=tube_mask, encoder_type="p", device = device,verbose=check)
             # print("predictor");utils.print_cuda_memory_usage()
 
 

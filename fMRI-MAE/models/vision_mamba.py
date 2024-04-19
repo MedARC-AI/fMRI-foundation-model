@@ -244,9 +244,12 @@ class VisionMamba(nn.Module):
             encoder_depth=24, 
             decoder_depth=24,
             embed_dim=192, 
+            encoder_outdim=None,
+            decoder_outdim=None,
             channels=3, 
             drop_rate=0.,
             drop_path_rate=0.1,
+            fc_drop_rate=0.,
             ssm_cfg=None, 
             norm_epsilon=1e-5, 
             initializer_cfg=None,
@@ -299,21 +302,25 @@ class VisionMamba(nn.Module):
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, self.embed_dim))
         image_depth, image_height, image_width = img_size
-        self.posemb_sincos_4d = posemb_sincos_4d(
-                torch.zeros(
-                    1,
-                    num_frames,
-                    image_depth // patch_depth,
-                    image_height // patch_height,
-                    image_width // patch_width,
-                    self.embed_dim,
-                )
-            )
-        print ("posemb_sincos_4d", self.posemb_sincos_4d.shape)
+        # self.posemb_sincos_4d = posemb_sincos_4d(
+        #         torch.zeros(
+        #             1,
+        #             num_frames,
+        #             image_depth // patch_depth,
+        #             image_height // patch_height,
+        #             image_width // patch_width,
+        #             self.embed_dim,
+        #         )
+        #     )
+        # print ("posemb_sincos_4d", self.posemb_sincos_4d.shape)
         self.mask_token = nn.Parameter(torch.zeros(1, 1, self.embed_dim))
-
-        # self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, self.embed_dim))
-        # self.temporal_pos_embedding = nn.Parameter(torch.zeros(1, num_frames // kernel_size, embed_dim))
+        num_spatial_patches = int(
+            (image_depth // patch_depth) * (image_height // patch_height) * (image_width // patch_width) 
+        )
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_spatial_patches, self.embed_dim))
+        self.temporal_pos_embedding = nn.Parameter(torch.zeros(1, num_frames, embed_dim))
+        self.map_pos_to_frame = torch.repeat_interleave(torch.arange(num_frames), num_spatial_patches)
+        self.map_pos_to_patch = torch.repeat_interleave(torch.arange(num_spatial_patches), num_frames)
         self.pos_drop = nn.Dropout(p=drop_rate)
 
         # dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
@@ -321,6 +328,7 @@ class VisionMamba(nn.Module):
         # inter_dpr = [0.0] + dpr
         encoder_inter_dpr = [0.0] + encoder_dpr
         self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0. else nn.Identity()
+
         # mamba blocks
         print (embed_dim, "rms_norm", rms_norm, "residual_in_fp32", residual_in_fp32, "fused_add_norm", fused_add_norm, "bimamba", bimamba, "ssm_cfg", ssm_cfg)
         self.encoder_layers = nn.ModuleList(
@@ -362,11 +370,20 @@ class VisionMamba(nn.Module):
         
         # output head
         self.norm_f = (nn.LayerNorm if not rms_norm else RMSNorm)(embed_dim, eps=norm_epsilon, **factory_kwargs)
-  
+        self.encoder_head = nn.Linear(embed_dim, encoder_outdim)
+        self.decoder_head = nn.Linear(embed_dim, decoder_outdim)
+        self.head_drop = nn.Dropout(fc_drop_rate) if fc_drop_rate > 0 else nn.Identity()
+        self.encoder_norm = nn.LayerNorm(embed_dim, eps=norm_epsilon, **factory_kwargs)
+        self.decoder_norm = nn.LayerNorm(embed_dim, eps=norm_epsilon, **factory_kwargs)
+        self.encoder_to_decoder =  nn.Sequential(
+            [nn.Linear(encoder_outdim, embed_dim, bias=False),
+             nn.LayerNorm(embed_dim)]
+        )
+        
 
         # original init
         self.apply(segm_init_weights)
-        # trunc_normal_(self.pos_embed, std=.02)
+        trunc_normal_(self.pos_embed, std=.02)
 
         # mamba init 
         self.apply(
@@ -385,8 +402,8 @@ class VisionMamba(nn.Module):
 
     @torch.jit.ignore
     def no_weight_decay(self):
-        # return {"pos_embed", "cls_token", "temporal_pos_embedding"}
-        return {"cls_token", "mask_token", "posemb_sincos_4d"}
+        return {"pos_embed", "mask_token", "temporal_pos_embedding"}
+        # return {"cls_token", "mask_token", "posemb_sincos_4d"}
     
     def get_num_layers(self):
         return len(self.encoder_layers) + len(self.decoder_layers)
@@ -401,15 +418,19 @@ class VisionMamba(nn.Module):
             x = self.patchify(x)
             # print("patchify", x.shape)
             x = self.patch_to_emb(x)
-            # print("patched_emb", x.shape)
+            
             B, T, D, H, W, C = x.shape
             # x = x.permute(0, 2, 3, 4, 1).reshape(B * T, H * W, C)
-            x = rearrange(x, "b ... d -> b (...) d")
-            # print ("rearrange", x.shape)
-            # position embeddings
-            x = x[:, encoder_mask] + self.posemb_sincos_4d[encoder_mask].to(x.device)
+            # spatial position embeddings
+            x = rearrange(x, "b ... d -> (b ...) d") # B, T, D, H, W, C -> B, (T*D*H*W), C
+             
+            # temporal position embeddings
+            # x = rearrange(x, "(b f) n d -> (b n) f d", b=B, f=T) 
+            # x = x + self.temporal_pos_embedding
+            x[:, encoder_mask, :] = x[:, encoder_mask, :] + self.temporal_pos_embedding[:, self.map_pos_to_frame[encoder_mask]] + self.pos_embed[:, self.map_pos_to_patch[encoder_mask]]
+            x = x[:, encoder_mask]  # B, N, D
             x = self.pos_drop(x)
-            # print ("after encoder embeddings", x.shape)
+            print ("after encoder embeddings", x.shape)
             
             # print("before mamba", x.shape) 
             # mamba impl
@@ -444,16 +465,21 @@ class VisionMamba(nn.Module):
                     prenorm=False,
                     residual_in_fp32=self.residual_in_fp32,
                 )
+            x = self.encoder_head(self.encoder_norm(self.head_drop(hidden_states)))
             # print ("hidden_states", hidden_states.shape)
-            return hidden_states 
+            return x 
         else:  # DECODER
             if verbose: print("decoder input", x.shape)
+            x = self.encoder_to_decoder(x)
             B, _, _ = x.shape
-            pos_emd_encoder = self.posemb_sincos_4d[encoder_mask].to(x.device)
-            pos_emd_decoder = self.posemb_sincos_4d[decoder_mask].to(x.device)
+            x[:, encoder_mask, :] = x[:, encoder_mask, :] + self.temporal_pos_embedding[:, self.map_pos_to_frame[encoder_mask]] + self.pos_embed[:, self.map_pos_to_patch[encoder_mask]]
+            pos_emd_decoder = self.pos_embed[:, self.map_pos_to_patch[decoder_mask]] + self.temporal_pos_embedding[:, self.map_pos_to_frame[decoder_mask]] # shape: (1, N, D) to be broadcasted across B
+            # pos_emd_encoder = self.posemb_sincos_4d[encoder_mask].to(x.device)
+            # pos_emd_decoder = self.posemb_sincos_4d[decoder_mask].to(x.device) # shape: (B, N, D)
             # print("pos_emd_encoder", pos_emd_encoder.shape, "pos_emd_decoder", pos_emd_decoder.shape)
-            x = torch.cat([x + pos_emd_encoder, 
-                                self.mask_token.repeat(B, pos_emd_decoder.size(0), 1) + pos_emd_decoder], 
+            # print("mask", self.mask_token.repeat(B, pos_emd_decoder.size(0), 1).shape)
+            x = torch.cat([x,
+                                self.mask_token.repeat(B, pos_emd_decoder.size(1), 1) + pos_emd_decoder], 
                                 dim=1) 
 
             x = self.pos_drop(x)
@@ -489,7 +515,8 @@ class VisionMamba(nn.Module):
                     prenorm=False,
                     residual_in_fp32=self.residual_in_fp32,
                 )
-            return hidden_states
+            x = self.decoder_head(self.decoder_norm(self.head_drop(hidden_states)))
+            return x
 
     def forward(self, x, inference_params=None, encoder_mask=None, decoder_mask=None, verbose=False):
         x = self.forward_features(x, inference_params, encoder_mask, decoder_mask, verbose)

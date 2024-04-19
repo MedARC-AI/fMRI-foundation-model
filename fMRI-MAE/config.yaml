@@ -1,16 +1,16 @@
 # Model Config
-model_name: "mar24_encoder32_decoder1_mamba64_lr3e-4"
+model_name: "apr19_encoder32_decoder32_randomtubemask_fixdecodemask_learnableposemb_lr4e-6"
 use_cls_token: False
 use_contrastive_loss: False
 constrastive_loss_weight: 1.0
 
 # Training Configs
 # global_batch_size: 64
-batch_size: 16
+batch_size: 8
 num_workers: 10
-num_epochs: 400
+num_epochs: 1000
 seed: 42
-max_lr: 3.0e-4 # Keep the x.0 else will be converted to string
+max_lr: 4.0e-6 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 1024
 cache_dir: "cache"
 
@@ -28,19 +28,24 @@ decoder_mask_ratio: 0.75
 
 # Model Config
 encoder_depth: 32
-decoder_depth: 1
+decoder_depth: 32
 patch_size: 8
 frame_patch_size: 1
+encoder_outdim: 6
+decoder_outdim: 512
 use_rope_emb: False
 masking_strategy: "MNI"
 
 # Data Config
 img_size: [88, 104, 72] # Image Size
+is_random_tube_mask_ratio: True
 num_frames: 4
-is_s3: True
+is_s3: False
 # train_urls: "s3://proj-fmri/fmri_foundation_datasets/openneuro_MNI_wds/{000005..000173}.tar"
-train_urls: ["s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000005..000494}.tar","s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000496..000740}.tar"]
-test_urls: ["s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000000..000004}.tar"]
+# train_urls: ["s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000005..000494}.tar","s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000496..000740}.tar"]
+# test_urls: ["s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000000..000004}.tar"]
+train_urls: ["/scratch/gpfs/KNORMAN/nsdfoundation/wds/{000005..000099}.tar"]
+test_urls: ["/scratch/gpfs/KNORMAN/nsdfoundation/wds/{000000..000004}.tar"]
 test_num_iterations_per_epoch: 10
 
 # debug

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --partition=della_gpu
+#SBATCH --partition=psych_gpu
 #SBATCH --job-name=fmrimamba
 #SBATCH --ntasks-per-node=1
 #SBATCH --nodes=1
@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --gpus-per-task=1       # Set to equal gres=gpu:#!
-#SBATCH --time=50:00:00         # total run time limit (HH:MM:SS)
+#SBATCH --time=1:00:00         # total run time limit (HH:MM:SS)
 #SBATCH -o slurms/%j.out
 #SBATCH --comment=medarc
 # SBATCH --no-requeue
@@ -15,8 +15,12 @@
 
 export NUM_GPUS=1 # Set to equal gres=gpu:#!
 echo NUM_GPUS=$NUM_GPUS
-cd /scratch/gpfs/qanguyen/mamba_fmri/fMRI-MAE
-conda activate /scratch/gpfs/qanguyen/mamba_fmri/fmri
+# cd /scratch/gpfs/qanguyen/mamba_fmri/fMRI-MAE
+cd /gpfs/milgram/project/turk-browne/projects/CuriousContrast/mamba_fmri/fMRI-MAE
+module load miniconda
+conda init
+# conda activate /scratch/gpfs/qanguyen/mamba_fmri/fmri
+conda activate /gpfs/milgram/project/turk-browne/projects/CuriousContrast/mamba_fmri/fmri
 
 jupyter nbconvert main.ipynb --to python
 if [ $? -ne 0 ]; then
@@ -48,6 +52,7 @@ export NCCL_TREE_THRESHOLD=0
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
 export NCCL_P2P_DISABLE=1
 # module load openmpi cuda/12.1
+# module load CUDA/12.0.0
 wandb offline
 srun torchrun \
 --nproc_per_node=$NUM_GPUS \

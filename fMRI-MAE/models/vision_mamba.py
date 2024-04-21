@@ -376,8 +376,8 @@ class VisionMamba(nn.Module):
         self.encoder_norm = nn.LayerNorm(embed_dim, eps=norm_epsilon, **factory_kwargs)
         self.decoder_norm = nn.LayerNorm(embed_dim, eps=norm_epsilon, **factory_kwargs)
         self.encoder_to_decoder =  nn.Sequential(
-            [nn.Linear(encoder_outdim, embed_dim, bias=False),
-             nn.LayerNorm(embed_dim)]
+            nn.Linear(encoder_outdim, embed_dim, bias=False),
+             nn.LayerNorm(embed_dim)
         )
         
 

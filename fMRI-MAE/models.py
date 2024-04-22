@@ -262,21 +262,44 @@ class VisionTransformerMAE(nn.Module):
             if verbose: print(x.shape)
             x = self.patchify(x)
             if verbose: print("patched", x.shape)
-            x = self.patch_to_emb(x.to(device))
-            if verbose: print("patched_emb", x.shape)
             x = rearrange(x, "b ... d -> b (...) d")
             if verbose: print("reshaped", x.shape)
+            
+            x = x[:, encoder_mask]
+            if verbose: print("masked", x.shape)
+            
+            x = self.patch_to_emb(x.to(device))
+            if verbose: print("patched_emb", x.shape)
+
             if not self.use_rope_emb:
                 if verbose: print("pe", self.posemb_sincos_4d.shape)
-                x = x + self.posemb_sincos_4d.to(x.device)
-            if verbose: print("x", x.shape)
-            x = x[:, encoder_mask]
+                x = x + self.posemb_sincos_4d[encoder_mask].to(device)
             if self.use_cls_token:
                 cls_tokens = self.cls_token.expand(len(x), -1, -1)
                 x = torch.cat((cls_tokens, x), dim=1)
             if verbose: print("masked", x.shape)
             x = self.encoder_transformer(x, mask=encoder_mask if self.use_rope_emb else None)
             if verbose: print(x.shape)
+            
+            
+            # if verbose: print(x.shape)
+            # x = self.patchify(x)
+            # if verbose: print("patched", x.shape)
+            # x = self.patch_to_emb(x.to(device))
+            # if verbose: print("patched_emb", x.shape)
+            # x = rearrange(x, "b ... d -> b (...) d")
+            # if verbose: print("reshaped", x.shape)
+            # if not self.use_rope_emb:
+            #     if verbose: print("pe", self.posemb_sincos_4d.shape)
+            #     x = x + self.posemb_sincos_4d.to(x.device)
+            # if verbose: print("x", x.shape)
+            # x = x[:, encoder_mask]
+            # if self.use_cls_token:
+            #     cls_tokens = self.cls_token.expand(len(x), -1, -1)
+            #     x = torch.cat((cls_tokens, x), dim=1)
+            # if verbose: print("masked", x.shape)
+            # x = self.encoder_transformer(x, mask=encoder_mask if self.use_rope_emb else None)
+            # if verbose: print(x.shape)
         else:  # DECODER
             if verbose: print(x.shape)
             if self.encoder_embed_dim != self.decoder_embed_dim:
@@ -307,7 +330,9 @@ class VisionTransformerMAE(nn.Module):
             else:
                 mask = torch.cat((torch.where(encoder_mask)[0], torch.where(decoder_mask)[0]))
                 # No abs positional embeddings for RoPE
-                x = torch.cat([x,self.mask_token.repeat(B, N - 1 if self.use_cls_token else N, 1)],dim=1)
+                x = torch.cat([x, 
+                               self.mask_token.repeat(B, N - 1 if self.use_cls_token else N, 1)],
+                              dim=1)
             if verbose: print("x_concat", x.shape)
             x = self.decoder_transformer(x, mask=mask)
             if verbose: print(x.shape)

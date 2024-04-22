@@ -4,16 +4,16 @@
 #SBATCH --job-name=found
 #SBATCH --ntasks-per-node=1
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:4
-#SBATCH --gpus-per-task=4       # Set to equal gres=gpu:#!
+#SBATCH --gres=gpu:1
+#SBATCH --gpus-per-task=1       # Set to equal gres=gpu:#!
 #SBATCH --time=35:00:00         # total run time limit (HH:MM:SS)
 #SBATCH -e slurms/%j.err        # first create a "slurms" folder in current directory to store logs
 #SBATCH -o slurms/%j.out
 #SBATCH --comment=medarc
 #SBATCH --no-requeue
-#SBATCH --exclude=ip-10-0-142-178
+#SBATCH --exclude=ip-10-0-134-244,ip-10-0-139-120,ip-10-0-139-20,ip-10-0-168-162
 
-export NUM_GPUS=4 # Set to equal gres=gpu:#!
+export NUM_GPUS=1 # Set to equal gres=gpu:#!
 echo NUM_GPUS=$NUM_GPUS
 
 source ~/.bashrc

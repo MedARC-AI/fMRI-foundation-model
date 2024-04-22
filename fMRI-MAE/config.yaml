@@ -1,17 +1,17 @@
 # Model Config
-model_name: "framepatchsize1_inputnormed_4gpu_bs8_3e7_norm_rope"
-use_cls_token: False
+model_name: "mini_nomask_logitsCLS_downstream_40ep_r"
+use_cls_token: True
 use_contrastive_loss: True
-constrastive_loss_weight: 0. 
-#0.005
+contrastive_loss_weight: 1.0
 
 # Training Configs
 batch_size: 8
 num_workers: 10
 num_epochs: 100
 seed: 42
-max_lr: 3.0e-7 # Keep the x.0 else will be converted to string
+max_lr: 3.0e-6 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 1024
+test_num_samples_per_epoch: 384
 
 # Saving progress
 ckpt_saving: True
@@ -20,26 +20,27 @@ resume_from_ckpt: True
 wandb_log: True
 
 # MAE Config
-tube_start_masking_ratio: 0.90
-tube_end_masking_ratio: 0.90
-decoder_mask_ratio: 0.85
+tube_start_masking_ratio: 0.75
+tube_end_masking_ratio: 0.75
+decoder_mask_ratio: 0.75
 
 # Model Config
 patch_size: [8,8,8]
-frame_patch_size: 1
-use_rope_emb: True
-masking_strategy: "MNI"
+frame_patch_size: 4
+use_rope_emb: False
+masking_strategy: "None" #"MNI" #"conservative" #"None"
 
 # ViT Config
-encoder_model: "vit_base"
-decoder_model: "vit_base"
+encoder_model: "vit_mini"
+decoder_model: "vit_mini"
 
 # Data Config
 img_size: [88, 104, 72] # Image Size #104
 num_frames: 4
 is_s3: False
 # train_urls: ["/weka/proj-fmri/shared/NSD_MNI_wds/000000.tar"]
-train_urls: ["/weka/proj-fmri/shared/NSD_MNI_wds/{000000..000738}.tar"]
+train_urls: ["/weka/proj-fmri/shared/NSD_MNI_wds/{000000..000699}.tar"]
+test_urls: ["/weka/proj-fmri/shared/NSD_MNI_wds/{000700..000738}.tar"]
 # train_urls: ["s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000000..000494}.tar","s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000496..000740}.tar"]
 
 #"/weka/proj-fmri/paulscotti/old_fMRI-foundation-model/dataset_creation/wds_creation/wds/000000.tar"

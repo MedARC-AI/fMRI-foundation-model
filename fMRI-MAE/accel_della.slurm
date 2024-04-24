@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --partition=psych_gpu
+#SBATCH --partition=della_gpu
 #SBATCH --job-name=fmrimamba
 #SBATCH --ntasks-per-node=1
 #SBATCH --nodes=1
@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --gpus-per-task=1       # Set to equal gres=gpu:#!
-#SBATCH --time=1:00:00         # total run time limit (HH:MM:SS)
+#SBATCH --time=50:00:00         # total run time limit (HH:MM:SS)
 #SBATCH -o slurms/%j.out
 #SBATCH --comment=medarc
 # SBATCH --no-requeue
@@ -15,12 +15,13 @@
 
 export NUM_GPUS=1 # Set to equal gres=gpu:#!
 echo NUM_GPUS=$NUM_GPUS
-# cd /scratch/gpfs/qanguyen/mamba_fmri/fMRI-MAE
-cd /gpfs/milgram/project/turk-browne/projects/CuriousContrast/mamba_fmri/fMRI-MAE
-module load miniconda
-conda init
-# conda activate /scratch/gpfs/qanguyen/mamba_fmri/fmri
-conda activate /gpfs/milgram/project/turk-browne/projects/CuriousContrast/mamba_fmri/fmri
+cd /scratch/gpfs/qanguyen/mamba_fmri/fMRI-MAE
+# cd /gpfs/milgram/project/turk-browne/projects/CuriousContrast/mamba_fmri/fMRI-MAE
+source ~/anaconda3/etc/profile.d/conda.sh
+# module load miniconda
+# conda init
+conda activate /scratch/gpfs/qanguyen/mamba_fmri/fmri
+# conda activate /gpfs/milgram/project/turk-browne/projects/CuriousContrast/mamba_fmri/fmri
 
 jupyter nbconvert main.ipynb --to python
 if [ $? -ne 0 ]; then

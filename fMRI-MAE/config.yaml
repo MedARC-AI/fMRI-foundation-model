@@ -1,5 +1,9 @@
+# debug
+debug: False
+
 # Model Config
-model_name: "apr19_encoder32_decoder32_randomtubemask_fixdecodemask_learnableposemb_lr4e-6"
+model_name: "apr23_encoder32_decoder1_equalseqlen_learnableposemb_encoder_outdim_6_lr4e-5"
+# model_name: "debug"
 use_cls_token: False
 use_contrastive_loss: False
 constrastive_loss_weight: 1.0
@@ -10,7 +14,7 @@ batch_size: 8
 num_workers: 10
 num_epochs: 1000
 seed: 42
-max_lr: 4.0e-6 # Keep the x.0 else will be converted to string
+max_lr: 4.0e-5 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 1024
 cache_dir: "cache"
 
@@ -28,7 +32,7 @@ decoder_mask_ratio: 0.75
 
 # Model Config
 encoder_depth: 32
-decoder_depth: 32
+decoder_depth: 1
 patch_size: 8
 frame_patch_size: 1
 encoder_outdim: 6
@@ -38,7 +42,7 @@ masking_strategy: "MNI"
 
 # Data Config
 img_size: [88, 104, 72] # Image Size
-is_random_tube_mask_ratio: True
+is_random_tube_mask_ratio: False
 num_frames: 4
 is_s3: False
 # train_urls: "s3://proj-fmri/fmri_foundation_datasets/openneuro_MNI_wds/{000005..000173}.tar"
@@ -48,5 +52,3 @@ train_urls: ["/scratch/gpfs/KNORMAN/nsdfoundation/wds/{000005..000099}.tar"]
 test_urls: ["/scratch/gpfs/KNORMAN/nsdfoundation/wds/{000000..000004}.tar"]
 test_num_iterations_per_epoch: 10
 
-# debug
-debug: False

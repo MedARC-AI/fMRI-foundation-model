@@ -319,6 +319,8 @@ class VisionMamba(nn.Module):
         )
         self.pos_embed = nn.Parameter(torch.zeros(1, num_spatial_patches, self.embed_dim))
         self.temporal_pos_embedding = nn.Parameter(torch.zeros(1, num_frames, embed_dim))
+        self.dec_pos_embed = nn.Parameter(torch.zeros(1, num_spatial_patches, self.embed_dim))
+        self.dec_temporal_pos_embedding = nn.Parameter(torch.zeros(1, num_frames, embed_dim))
         self.map_pos_to_frame = torch.repeat_interleave(torch.arange(num_frames), num_spatial_patches)
         self.map_pos_to_patch = torch.repeat_interleave(torch.arange(num_spatial_patches), num_frames)
         self.pos_drop = nn.Dropout(p=drop_rate)
@@ -412,8 +414,8 @@ class VisionMamba(nn.Module):
     def load_pretrained(self, checkpoint_path, prefix=""):
         _load_weights(self, checkpoint_path, prefix)
 
-    def forward_features(self, x, inference_params, encoder_mask=None, decoder_mask=None, verbose=False):
-        if decoder_mask is None:
+    def forward_features(self, x, inference_params, encoder_mask=None, decoder_mask=None, is_encode_phase=True, mask_idx=None):
+        if is_encode_phase == True:
             # print("inp", x.shape)
             x = self.patchify(x)
             # print("patchify", x.shape)
@@ -422,15 +424,27 @@ class VisionMamba(nn.Module):
             B, T, D, H, W, C = x.shape
             # x = x.permute(0, 2, 3, 4, 1).reshape(B * T, H * W, C)
             # spatial position embeddings
-            x = rearrange(x, "b ... d -> (b ...) d") # B, T, D, H, W, C -> B, (T*D*H*W), C
+            x = rearrange(x, "b ... d -> b (...) d") # B, T, D, H, W, C -> B, (T*D*H*W), C
              
             # temporal position embeddings
             # x = rearrange(x, "(b f) n d -> (b n) f d", b=B, f=T) 
             # x = x + self.temporal_pos_embedding
+            # print("x[:, encoder_mask, :]",x[:, encoder_mask, :].shape)
+            # print ("pos_embed", self.pos_embed[:, self.map_pos_to_patch[encoder_mask]].shape)
+            # print ("temporal_pos_embedding", self.temporal_pos_embedding[:, self.map_pos_to_frame[encoder_mask]].shape)
+
             x[:, encoder_mask, :] = x[:, encoder_mask, :] + self.temporal_pos_embedding[:, self.map_pos_to_frame[encoder_mask]] + self.pos_embed[:, self.map_pos_to_patch[encoder_mask]]
-            x = x[:, encoder_mask]  # B, N, D
+            # print ("before encoder embeddings", x.shape)
+            # print("decoder_mask",decoder_mask)
+            pos_emd_decoder = self.pos_embed[:, self.map_pos_to_patch[decoder_mask]] + self.temporal_pos_embedding[:, self.map_pos_to_frame[decoder_mask]] # shape: (1, N, D) to be broadcasted across B
+            # print("self.mask_token.repeat(B, pos_emd_decoder.size(1), 1) + pos_emd_decoder",(self.mask_token.repeat(B, pos_emd_decoder.size(1), 1)  ).shape)
+            x[:, decoder_mask, :] = self.mask_token.repeat(B, pos_emd_decoder.size(1), 1) + pos_emd_decoder
+            # x[:, decoder_mask, :] = x[:, decoder_mask, :] + self.temporal_pos_embedding[:, self.map_pos_to_frame[decoder_mask]] + self.pos_embed[:, self.map_pos_to_patch[decoder_mask]]
+
+            # x = x[:, encoder_mask, :]  # B, N, D
+            x = x[:, mask_idx, :]
             x = self.pos_drop(x)
-            print ("after encoder embeddings", x.shape)
+            # print ("after encoder embeddings", x.shape)
             
             # print("before mamba", x.shape) 
             # mamba impl
@@ -468,20 +482,23 @@ class VisionMamba(nn.Module):
             x = self.encoder_head(self.encoder_norm(self.head_drop(hidden_states)))
             # print ("hidden_states", hidden_states.shape)
             return x 
-        else:  # DECODER
-            if verbose: print("decoder input", x.shape)
+        else:  # DECODER: Assume that the input is the output of the encoder
+            # Given all patches in order
+            # print("decoder input", x.shape)
             x = self.encoder_to_decoder(x)
-            B, _, _ = x.shape
-            x[:, encoder_mask, :] = x[:, encoder_mask, :] + self.temporal_pos_embedding[:, self.map_pos_to_frame[encoder_mask]] + self.pos_embed[:, self.map_pos_to_patch[encoder_mask]]
-            pos_emd_decoder = self.pos_embed[:, self.map_pos_to_patch[decoder_mask]] + self.temporal_pos_embedding[:, self.map_pos_to_frame[decoder_mask]] # shape: (1, N, D) to be broadcasted across B
+            x += self.dec_temporal_pos_embedding[:, self.map_pos_to_frame[mask_idx]] + self.dec_pos_embed[:, self.map_pos_to_patch[mask_idx]]
+            # print("decoder after encoder_to_decoder", x.shape)
+            # B, _, _ = x.shape
+            # x = x + self.temporal_pos_embedding[:, self.map_pos_to_frame[encoder_mask]] + self.pos_embed[:, self.map_pos_to_patch[encoder_mask]]
+            # pos_emd_decoder = self.pos_embed[:, self.map_pos_to_patch[decoder_mask]] + self.temporal_pos_embedding[:, self.map_pos_to_frame[decoder_mask]] # shape: (1, N, D) to be broadcasted across B
             # pos_emd_encoder = self.posemb_sincos_4d[encoder_mask].to(x.device)
             # pos_emd_decoder = self.posemb_sincos_4d[decoder_mask].to(x.device) # shape: (B, N, D)
             # print("pos_emd_encoder", pos_emd_encoder.shape, "pos_emd_decoder", pos_emd_decoder.shape)
-            # print("mask", self.mask_token.repeat(B, pos_emd_decoder.size(0), 1).shape)
-            x = torch.cat([x,
-                                self.mask_token.repeat(B, pos_emd_decoder.size(1), 1) + pos_emd_decoder], 
-                                dim=1) 
-
+            # print("mask", (self.mask_token.repeat(B, pos_emd_decoder.size(1), 1) + pos_emd_decoder).shape)
+            # x = torch.cat([x,
+            #                     self.mask_token.repeat(B, pos_emd_decoder.size(1), 1) + pos_emd_decoder], 
+            #                     dim=1) 
+            # print("after cat", x.shape)
             x = self.pos_drop(x)
             # print("decoder input after pos", x.shape)
             residual = None
@@ -518,8 +535,12 @@ class VisionMamba(nn.Module):
             x = self.decoder_head(self.decoder_norm(self.head_drop(hidden_states)))
             return x
 
-    def forward(self, x, inference_params=None, encoder_mask=None, decoder_mask=None, verbose=False):
-        x = self.forward_features(x, inference_params, encoder_mask, decoder_mask, verbose)
+    def forward(self, x, inference_params=None, encoder_mask=None, decoder_mask=None, mask_idx=None, is_encode_phase=True):
+        x = self.forward_features(x, inference_params, 
+                                  encoder_mask=encoder_mask, 
+                                  decoder_mask=decoder_mask, 
+                                  mask_idx=mask_idx, 
+                                  is_encode_phase=is_encode_phase)
         # x = self.head(self.head_drop(x))
         return x
 

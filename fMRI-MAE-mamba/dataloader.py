@@ -770,3 +770,10 @@ def create_loader(
         datapipeline, batch_size=None, num_workers=num_workers, **loader_kwargs
     )
     return loader
+
+if __name__ == "__main__":
+    from huggingface_hub import snapshot_download
+    #snapshot_download(repo_id="pscotti/nsdfoundation", repo_type = "dataset", revision="main", cache_dir = "./cache" ,
+    #    local_dir= "/scratch/gpfs/qanguyen/nsdfoundation", local_dir_use_symlinks = False, resume_download = True)
+    snapshot_download(repo_id="pscotti/nsdfoundation", repo_type = "dataset", revision="main", cache_dir = "./cache" ,
+       local_dir= "/scratch/gpfs/qanguyen/nsdfoundation",  resume_download = True)

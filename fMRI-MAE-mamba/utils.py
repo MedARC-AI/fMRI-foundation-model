@@ -104,7 +104,7 @@ class DataPrepper:
 
         func = func[:,timepoints]
 
-        if self.masking_strategy=="MNI":
+        if self.masking_strategy=="MNI" or self.masking_strategy=="None":
             return func, None
         
         brain_segmentation = threshold_based_masking(func.mean(1))
@@ -217,6 +217,16 @@ def topk(similarities,labels,k=5):
         topsum += torch.sum(torch.argsort(similarities,axis=1)[:,-(i+1)] == labels)/len(labels)
     return topsum
 
+def patchwise_cosine_similarity(latents1,latents2=None):
+    if latents2 is None:
+        latents_norm = latents1/latents1.norm(dim=-1, keepdim=True)
+        cos_sim = torch.bmm(latents_norm, latents_norm.permute(0,2,1))
+    else:
+        latents_norm1 = latents1/latents1.norm(dim=-1, keepdim=True)
+        latents_norm2 = latents2/latents2.norm(dim=-1, keepdim=True)
+        cos_sim = latents_norm1 @ latents_norm2.T
+    return cos_sim
+    
 def batchwise_cosine_similarity(Z,B):
     Z = Z.flatten(1)
     B = B.flatten(1).T
@@ -237,7 +247,7 @@ def get_masking_ratio(current_epoch, total_epochs, start_masking_ratio, end_mask
     """Returns the masking ratio for the current epochs. Linearly increase the masking ratio over the span of the training"""
     return start_masking_ratio + (end_masking_ratio-start_masking_ratio) * ((current_epoch+1)/total_epochs)
 
-def view_brain(data):
+def view_brain(data,cut_coords=None):
     if torch.is_tensor(data):
         data = data.numpy()
     if data.ndim==5:
@@ -248,7 +258,7 @@ def view_brain(data):
         new_nii = nib.Nifti1Image((data.astype(np.float32)-.5)*2, np.eye(4))
     else:
         raise Exception("Check dimensionality of your brain data")
-    return plotting.view_img(new_nii, bg_img=None, vmax=1, cmap=plt.cm.gray, threshold=None)
+    return plotting.view_img(new_nii, bg_img=None, cut_coords=cut_coords, vmax=1, cmap=plt.cm.gray, threshold=None)
 
 def get_first_tar(train_urls):
     if isinstance(train_urls, list):

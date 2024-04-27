@@ -1,13 +1,18 @@
+
+# debug
+debug: False
+
 # Model Config
-model_name: "pretrain_framepatchsize4"
-mae_model_name: "framepatchsize4_bs8_300ep"
+model_name: "downstream_lr3.0e-5_apr23_encoder32_decoder1_equalseqlen_learnableposemb_encoder_outdim_6_lr4e-5"
+mae_model_name: "apr23_encoder32_decoder1_equalseqlen_learnableposemb_encoder_outdim_6_lr4e-5"
 
 # Training Configs
-global_batch_size: 32
+global_batch_size: 8
 mixed_precision: "fp16"
-num_epochs: 12
+num_epochs: 50
 seed: 42
-max_lr: 3.0e-4 # Keep the x.0 else will be converted to string
+max_lr: 3.0e-5 # Keep the x.0 else will be converted to string
+num_samples_per_epoch: 512
 multi_subject: False
 multisubject_ckpt: None
 
@@ -18,13 +23,56 @@ resume_from_ckpt: False
 wandb_log: True
 
 # Model Config
-in_dim: 370176
+in_dim: 17400 # 987136
 hidden_dim: 512
 drop: .15
 mixup_pct: 0.33
 
 # Data Config
-nsd_wds_path: "/weka/proj-fmri/shared/mindeyev2_dataset/wds"
-nsd_raw_path: "/weka/proj-fmri/shared/mindeyev2_dataset"
-nsd_image_path: "/weka/proj-fmri/shared/mindeyev2_dataset"
+# nsd_wds_path: "/weka/proj-fmri/shared/mindeyev2_dataset/wds"
+nsd_wds_path: "/scratch/gpfs/KNORMAN/mindeyev2_dataset/wds"
+# nsd_raw_path: "/weka/proj-fmri/shared/mindeyev2_dataset"
+nsd_raw_path: "/scratch/gpfs/KNORMAN/mindeyev2_dataset"
+# nsd_image_path: "/weka/proj-fmri/shared/mindeyev2_dataset"
+nsd_image_path: "/scratch/gpfs/KNORMAN/mindeyev2_dataset"
 num_sessions: 40
+
+## MAE CONFIG
+use_cls_token: False
+use_contrastive_loss: False
+constrastive_loss_weight: 1.0
+
+# Training Configs
+# global_batch_size: 64
+batch_size: 8
+num_workers: 10
+cache_dir: "cache"
+
+# Saving progress
+wandb_group_name: "mamba"
+
+# MAE Config
+tube_start_masking_ratio: 0.75
+tube_end_masking_ratio: 0.75
+decoder_mask_ratio: 0.75
+
+# Model Config
+encoder_depth: 32
+decoder_depth: 1
+patch_size: 8
+frame_patch_size: 1
+encoder_outdim: 6
+decoder_outdim: 512
+use_rope_emb: False
+masking_strategy: "MNI"
+
+# Data Config
+img_size: [88, 104, 72] # Image Size
+num_frames: 4
+is_s3: False
+# train_urls: "s3://proj-fmri/fmri_foundation_datasets/openneuro_MNI_wds/{000005..000173}.tar"
+# train_urls: ["s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000005..000494}.tar","s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000496..000740}.tar"]
+# test_urls: ["s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000000..000004}.tar"]
+train_urls: ["/scratch/gpfs/KNORMAN/nsdfoundation/wds/{000005..000099}.tar"]
+test_urls: ["/scratch/gpfs/KNORMAN/nsdfoundation/wds/{000000..000004}.tar"]
+test_num_iterations_per_epoch: 10

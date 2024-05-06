@@ -15,6 +15,6 @@ def random_data() -> torch.Tensor:
 
 
 def test_mae_vit_small_patch16_hcpflat(random_data: torch.Tensor):
-    model = mae_vit_small_patch16_hcpflat()
+    model = mae_vit_small_patch16_hcpflat(cls_embed=True, sep_pos_embed=True)
     loss, pred, mask = model.forward(random_data)
     print(f"loss: {loss:.3e}")

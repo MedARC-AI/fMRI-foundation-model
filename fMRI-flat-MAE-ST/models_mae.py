@@ -163,12 +163,15 @@ class MaskedAutoencoderViT(nn.Module):
                 ph=patch_size,
                 pw=patch_size,
             ).any(dim=1)
+            patch_mask_indices, = patch_mask.nonzero(as_tuple=True)
             self.register_buffer("img_mask", img_mask)
             self.register_buffer("patch_mask", patch_mask)
+            self.register_buffer("patch_mask_indices", patch_mask_indices)
             self.n_mask_patches = patch_mask.sum().item()
         else:
             self.register_buffer("img_mask", None)
             self.register_buffer("patch_mask", None)
+            self.register_buffer("patch_mask_indices", None)
             self.n_mask_patches = None
 
         self.initialize_weights()
@@ -411,9 +414,16 @@ class MaskedAutoencoderViT(nn.Module):
         x = x + decoder_pos_embed
 
         attn = self.decoder_blocks[0].attn
-        requires_t_shape = hasattr(attn, "requires_t_shape") and attn.requires_t_shape
-        if requires_t_shape:
+
+        # drop patches outside image mask
+        if self.img_mask is not None:
+            if self.cls_embed:
+                decoder_cls_tokens, x = x[:, :1, :], x[:, 1:, :]
             x = x.view([N, T, H * W, C])
+            x = x[:, :, self.patch_mask_indices]
+            x = x.view([N, T * self.n_mask_patches, C])
+            if self.cls_embed:
+                x = torch.cat((decoder_cls_tokens, x), dim=1)
 
         # apply Transformer blocks
         for blk in self.decoder_blocks:
@@ -423,10 +433,17 @@ class MaskedAutoencoderViT(nn.Module):
         # predictor projection
         x = self.decoder_pred(x)
 
-        if requires_t_shape:
-            x = x.view([N, T * H * W, -1])
-
-        if self.cls_embed:
+        # fill outside mask with zeros
+        if self.img_mask is not None:
+            if self.cls_embed:
+                x = x[:, 1:, :]
+            x = x.view([N, T, self.n_mask_patches, C])
+            x_ = torch.zeros([N, T, H * W, C], dtype=x.dtype, device=x.device)
+            x = x_.scatter(
+                2, self.patch_mask_indices.view(1, 1, -1, 1).expand(N, T, -1, C), x,
+            )
+            x = x.view([N, T * H * W, C])
+        elif self.cls_embed:
             # remove cls token
             x = x[:, 1:, :]
         else:

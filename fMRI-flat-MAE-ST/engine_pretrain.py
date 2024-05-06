@@ -11,8 +11,8 @@
 import math
 from typing import Iterable
 
-import mae_st.util.lr_sched as lr_sched
-import mae_st.util.misc as misc
+import util.lr_sched as lr_sched
+import util.misc as misc
 import torch
 from iopath.common.file_io import g_pathmgr as pathmgr
 

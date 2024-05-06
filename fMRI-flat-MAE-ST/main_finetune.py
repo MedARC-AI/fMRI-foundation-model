@@ -16,24 +16,24 @@ import json
 import os
 import time
 
-import mae_st.models_vit as models_vit
+import models_vit as models_vit
 
-import mae_st.util.env
-import mae_st.util.lr_decay as lrd
-import mae_st.util.misc as misc
+import util.env
+import util.lr_decay as lrd
+import util.misc as misc
 
 import numpy as np
 import timm
 import torch
 import torch.backends.cudnn as cudnn
 from iopath.common.file_io import g_pathmgr as pathmgr
-from mae_st.engine_finetune import evaluate, train_one_epoch
+from engine_finetune import evaluate, train_one_epoch
 
-from mae_st.util.decoder.mixup import MixUp as MixVideo
-from mae_st.util.kinetics import Kinetics
-from mae_st.util.logging import master_print as print
-from mae_st.util.misc import NativeScalerWithGradNormCount as NativeScaler
-from mae_st.util.pos_embed import interpolate_pos_embed
+from util.decoder.mixup import MixUp as MixVideo
+from util.kinetics import Kinetics
+from util.logging import master_print as print
+from util.misc import NativeScalerWithGradNormCount as NativeScaler
+from util.pos_embed import interpolate_pos_embed
 
 # from pytorchvideo.transforms.mix import MixVideo
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy

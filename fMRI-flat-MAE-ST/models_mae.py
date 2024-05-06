@@ -8,14 +8,17 @@
 # timm: https://github.com/rwightman/pytorch-image-models/tree/master/timm
 # DeiT: https://github.com/facebookresearch/deit
 # MAE: https://github.com/facebookresearch/mae
+# MAE-ST: https://github.com/facebookresearch/mae_st
 # --------------------------------------------------------
 
 from functools import partial
 
 import torch
 import torch.nn as nn
-from mae_st.util import video_vit
-from mae_st.util.logging import master_print as print
+from einops import rearrange
+from util import video_vit
+from util.logging import master_print as print
+from util.hcp_flat import load_hcp_flat_mask
 
 
 class MaskedAutoencoderViT(nn.Module):
@@ -43,6 +46,7 @@ class MaskedAutoencoderViT(nn.Module):
         trunc_init=False,
         cls_embed=False,
         pred_t_dim=8,
+        img_mask=None,
         **kwargs,
     ):
         super().__init__()
@@ -150,6 +154,23 @@ class MaskedAutoencoderViT(nn.Module):
 
         self.norm_pix_loss = norm_pix_loss
 
+        # mask of valid pixels
+        if img_mask is not None:
+            img_mask = torch.as_tensor(img_mask > 0)
+            patch_mask = rearrange(
+                img_mask,
+                "(h ph) (w pw) -> (h w) (ph pw)",
+                ph=patch_size,
+                pw=patch_size,
+            ).any(dim=1)
+            self.register_buffer("img_mask", img_mask)
+            self.register_buffer("patch_mask", patch_mask)
+            self.n_mask_patches = patch_mask.sum().item()
+        else:
+            self.register_buffer("img_mask", None)
+            self.register_buffer("patch_mask", None)
+            self.n_mask_patches = None
+
         self.initialize_weights()
 
         print("model initialized")
@@ -196,33 +217,34 @@ class MaskedAutoencoderViT(nn.Module):
 
     def patchify(self, imgs):
         """
-        imgs: (N, 3, H, W)
-        x: (N, L, patch_size**2 *3)
+        imgs: (N, C, T, H, W)
+        x: (N, L, patch_size**2 *C)
         """
-        N, _, T, H, W = imgs.shape
-        p = self.patch_embed.patch_size[0]
+        N, C, T, H, W = imgs.shape
+        ph, pw = self.patch_embed.patch_size
         u = self.t_pred_patch_size
-        assert H == W and H % p == 0 and T % u == 0
-        h = w = H // p
+        assert H % ph == 0 and W % pw == 0 and T % u == 0
+        h = H // ph
+        w = W // pw
         t = T // u
 
-        x = imgs.reshape(shape=(N, 3, t, u, h, p, w, p))
+        x = imgs.reshape(shape=(N, C, t, u, h, ph, w, pw))
         x = torch.einsum("nctuhpwq->nthwupqc", x)
-        x = x.reshape(shape=(N, t * h * w, u * p**2 * 3))
-        self.patch_info = (N, T, H, W, p, u, t, h, w)
+        x = x.reshape(shape=(N, t * h * w, u * ph * pw * C))
+        self.patch_info = (N, C, T, H, W, ph, pw, u, t, h, w)
         return x
 
     def unpatchify(self, x):
         """
-        x: (N, L, patch_size**2 *3)
-        imgs: (N, 3, H, W)
+        x: (N, L, patch_size**2 *C)
+        imgs: (N, C, H, W)
         """
-        N, T, H, W, p, u, t, h, w = self.patch_info
+        N, C, T, H, W, ph, pw, u, t, h, w = self.patch_info
 
-        x = x.reshape(shape=(N, t, h, w, u, p, p, 3))
+        x = x.reshape(shape=(N, t, h, w, u, ph, pw, C))
 
         x = torch.einsum("nthwupqc->nctuhpwq", x)
-        imgs = x.reshape(shape=(N, 3, T, H, W))
+        imgs = x.reshape(shape=(N, C, T, H, W))
         return imgs
 
     def random_masking(self, x, mask_ratio):
@@ -232,9 +254,23 @@ class MaskedAutoencoderViT(nn.Module):
         x: [N, L, D], sequence
         """
         N, L, D = x.shape  # batch, length, dim
-        len_keep = int(L * (1 - mask_ratio))
+        T = self.patch_embed.t_grid_size
+        H, W = self.patch_embed.grid_size
+        assert L == T * H * W
+
+        # adjust number to keep relative to image mask
+        if self.img_mask is not None:
+            len_keep = int(T * self.n_mask_patches * (1 - mask_ratio))
+        else:
+            len_keep = int(L * (1 - mask_ratio))
 
         noise = torch.rand(N, L, device=x.device)  # noise in [0, 1]
+
+        # shift missing patches to not be selected
+        if self.img_mask is not None:
+            noise = noise.view(N, T, H * W)
+            noise = noise + ~self.patch_mask
+            noise = noise.view(N, L)
 
         # sort noise for each sample
         ids_shuffle = torch.argsort(
@@ -330,7 +366,7 @@ class MaskedAutoencoderViT(nn.Module):
     def forward_decoder(self, x, ids_restore):
         N = x.shape[0]
         T = self.patch_embed.t_grid_size
-        H = W = self.patch_embed.grid_size
+        H, W = self.patch_embed.grid_size
 
         # embed tokens
         x = self.decoder_embed(x)
@@ -400,10 +436,13 @@ class MaskedAutoencoderViT(nn.Module):
 
     def forward_loss(self, imgs, pred, mask):
         """
-        imgs: [N, 3, T, H, W]
-        pred: [N, t*h*w, u*p*p*3]
-        mask: [N*t, h*w], 0 is keep, 1 is remove,
+        imgs: [N, C, T, H, W]
+        pred: [N, t*h*w, u*p*p*C]
+        mask: [N, t*h*w], 0 is keep, 1 is remove,
         """
+        N = imgs.size(0)
+        T = self.patch_embed.t_grid_size
+        H, W = self.patch_embed.grid_size
         _imgs = torch.index_select(
             imgs,
             2,
@@ -423,6 +462,8 @@ class MaskedAutoencoderViT(nn.Module):
 
         loss = (pred - target) ** 2
         loss = loss.mean(dim=-1)  # [N, L], mean loss per patch
+        if self.img_mask is not None:
+            mask = mask.view(N, T, H*W) * self.patch_mask
         mask = mask.view(loss.shape)
 
         loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
@@ -430,7 +471,7 @@ class MaskedAutoencoderViT(nn.Module):
 
     def forward(self, imgs, mask_ratio=0.75):
         latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio)
-        pred = self.forward_decoder(latent, ids_restore)  # [N, L, p*p*3]
+        pred = self.forward_decoder(latent, ids_restore)  # [N, L, p*p*C]
         loss = self.forward_loss(imgs, pred, mask)
         return loss, pred, mask
 
@@ -469,6 +510,70 @@ def mae_vit_huge_patch14(**kwargs):
         num_heads=16,
         mlp_ratio=4,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        **kwargs,
+    )
+    return model
+
+
+def mae_vit_small_patch16_hcpflat(**kwargs):
+    model = MaskedAutoencoderViT(
+        img_size=(144, 320),
+        patch_size=16,
+        in_chans=1,
+        embed_dim=384,
+        depth=12,
+        num_heads=6,
+        mlp_ratio=4,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        img_mask=load_hcp_flat_mask(),
+        **kwargs,
+    )
+    return model
+
+
+def mae_vit_base_patch16_hcpflat(**kwargs):
+    model = MaskedAutoencoderViT(
+        img_size=(144, 320),
+        patch_size=16,
+        in_chans=1,
+        embed_dim=768,
+        depth=12,
+        num_heads=12,
+        mlp_ratio=4,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        img_mask=load_hcp_flat_mask(),
+        **kwargs,
+    )
+    return model
+
+
+def mae_vit_large_patch16_hcpflat(**kwargs):
+    model = MaskedAutoencoderViT(
+        img_size=(144, 320),
+        patch_size=16,
+        in_chans=1,
+        embed_dim=1024,
+        depth=24,
+        num_heads=16,
+        mlp_ratio=4,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        img_mask=load_hcp_flat_mask(),
+        **kwargs,
+    )
+    return model
+
+
+def mae_vit_huge_patch16_hcpflat(**kwargs):
+    model = MaskedAutoencoderViT(
+        img_size=(144, 320),
+        patch_size=16,
+        in_chans=1,
+        embed_dim=1280,
+        depth=32,
+        num_heads=16,
+        mlp_ratio=4,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        img_mask=load_hcp_flat_mask(),
         **kwargs,
     )
     return model

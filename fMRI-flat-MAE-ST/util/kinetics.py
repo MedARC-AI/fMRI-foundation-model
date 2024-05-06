@@ -9,7 +9,7 @@ import torch
 import torch.utils.data
 
 from iopath.common.file_io import g_pathmgr as pathmgr
-from mae_st.util.decoder.decoder import get_start_end_idx, temporal_sampling
+from util.decoder.decoder import get_start_end_idx, temporal_sampling
 from torchvision import transforms
 
 from .decoder import decoder as decoder, utils as utils, video_container as container

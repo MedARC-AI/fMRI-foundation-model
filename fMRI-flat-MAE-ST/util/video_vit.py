@@ -2,7 +2,7 @@
 # All rights reserved.
 
 
-import mae_st.util.logging as logging
+import util.logging as logging
 import torch
 import torch.nn as nn
 from timm.models.layers import to_2tuple
@@ -52,7 +52,7 @@ class PatchEmbed(nn.Module):
 
         self.num_patches = num_patches
 
-        self.grid_size = img_size[0] // patch_size[0]
+        self.grid_size = img_size[0] // patch_size[0], img_size[1] // patch_size[1]
         self.t_grid_size = frames // t_patch_size
 
         kernel_size = [t_patch_size] + list(patch_size)

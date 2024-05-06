@@ -13,10 +13,10 @@ import math
 import sys
 from typing import Iterable, Optional
 
-import mae_st.util.lr_sched as lr_sched
-import mae_st.util.misc as misc
+import util.lr_sched as lr_sched
+import util.misc as misc
 import torch
-from mae_st.util.logging import master_print as print
+from util.logging import master_print as print
 from timm.data import Mixup
 from timm.utils import accuracy
 

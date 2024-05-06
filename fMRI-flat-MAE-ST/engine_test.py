@@ -9,7 +9,7 @@
 # BEiT: https://github.com/microsoft/unilm/tree/master/beit
 # --------------------------------------------------------
 
-import mae_st.util.misc as misc
+import util.misc as misc
 import torch
 
 

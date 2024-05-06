@@ -6,3 +6,7 @@ data
 **/ckpts/
 **/slurms/
 **/wandb/
+
+.venv
+.vscode
+**/.scratch

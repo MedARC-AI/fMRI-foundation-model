@@ -25,7 +25,8 @@ def create_hcp_flat_loader(
     cache_dir: Optional[str] = None,
 ):
     """
-    Create HCP-Flat data loader
+    Create HCP-Flat data loader. Yields batches of (keys, images) where keys is a list
+    of sample keys and images is a batch of clips, shape (N, C, T, H, W).
 
     References:
         https://github.com/webdataset/webdataset/issues/250#issuecomment-1454094496
@@ -60,12 +61,12 @@ def create_hcp_flat_loader(
     # Note that in training this does not do deterministic shuffling, which we would
     # need for exact reproducibility. They get determistic shuffling in timm, but it's
     # more complicated.
-    
+
     # Note that we are splitting the long timeseries into clips after shuffling, which
     # means clips from the same series will appear consecutively in the batch(es).
     # I think this is not too bad. It is basically equivalent to training on longer
     # sequences. Clipping before shuffling might be preferred, but it results in a bad
-    # system memory leak (https://github.com/webdataset/webdataset/issues/354). 
+    # system memory leak (https://github.com/webdataset/webdataset/issues/354).
     dataset = (
         wds.WebDataset(
             urls,
@@ -103,7 +104,8 @@ def extract_images(sample: Dict[str, Any], mask: torch.Tensor):
     images = torch.from_numpy(images) / 255.0
     images = (images - 0.5) / 0.2
     images = unmask(images, mask)
-    images = images.unsqueeze(1)
+    # (C, T, H, W,)
+    images = images.unsqueeze(0)
     return key, images
 
 
@@ -119,8 +121,8 @@ def to_clips(frames: int = 16):
     def _filter(src: IterableDataset[Tuple[str, torch.Tensor]]):
         for key, images in src:
             offset = random.randint(0, frames)
-            for start in range(offset, len(images) - frames, frames):
-                yield key, images[start : start + frames]
+            for start in range(offset, images.shape[1] - frames, frames):
+                yield key, images[:, start : start + frames]
     return _filter
 
 

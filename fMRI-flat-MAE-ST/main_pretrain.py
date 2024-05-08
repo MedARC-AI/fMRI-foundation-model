@@ -205,6 +205,11 @@ def get_args_parser():
 def main(args):
     misc.init_distributed_mode(args)
 
+    global_rank = misc.get_rank()
+    if global_rank == 0 and args.wandb:
+        assert has_wandb, "wandb not installed"
+        wandb.init(project=PROJECT, name=args.name, config=vars(args))
+
     print("job dir: {}".format(os.path.dirname(os.path.realpath(__file__))))
     print("{}".format(args).replace(", ", ",\n"))
 
@@ -231,15 +236,10 @@ def main(args):
     num_batches = args.num_samples // (misc.get_world_size() * args.batch_size)
     data_loader_train = data_loader_train.with_epoch(num_batches)
 
-    global_rank = misc.get_rank()
     if global_rank == 0 and args.output_dir:
         if args.name:
             args.output_dir = f"{args.output_dir}/{args.name}"
         Path(args.output_dir).mkdir(parents=True)
-
-    if global_rank == 0 and args.wandb:
-        assert has_wandb, "wandb not installed"
-        wandb.init(project=PROJECT, name=args.name, config=vars(args))
 
     # define the model
     model = models_mae.__dict__[args.model](
@@ -269,6 +269,9 @@ def main(args):
             # find_unused_parameters=True,
         )
         model_without_ddp = model.module
+
+    if global_rank == 0 and args.wandb:
+        wandb.watch(model)
 
     # following timm: set wd as 0 for bias and norm layers
     param_groups = misc.add_weight_decay(

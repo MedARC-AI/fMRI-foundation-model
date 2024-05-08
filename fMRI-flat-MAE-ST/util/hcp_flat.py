@@ -70,7 +70,7 @@ def create_hcp_flat(
         .shuffle(1000 if training else 0)
         .decode()
         .map(partial(extract_images, mask=load_hcp_flat_mask()))
-        .compose(partial(to_clips, frames=frames))
+        .compose(to_clips(frames))
     )
     return dataset
 

@@ -131,7 +131,7 @@ def get_args_parser():
     parser.add_argument(
         "--start_epoch", default=0, type=int, metavar="N", help="start epoch"
     )
-    parser.add_argument("--num_workers", default=10, type=int)
+    parser.add_argument("--num_workers", default=5, type=int)
     parser.add_argument(
         "--pin_mem",
         action="store_true",
@@ -198,6 +198,7 @@ def get_args_parser():
     )
     parser.add_argument("--cls_embed", action="store_true")
     parser.set_defaults(cls_embed=True)
+    parser.add_argument("--debug", action="store_true")
     return parser
 
 
@@ -279,7 +280,7 @@ def main(args):
         beta = (0.9, 0.95)
     else:
         beta = args.beta
-    optimizer = torch.optim._multi_tensor.AdamW(
+    optimizer = torch.optim.AdamW(
         param_groups,
         lr=args.lr,
         betas=beta,
@@ -332,6 +333,9 @@ def main(args):
                 "a",
             ) as f:
                 f.write(json.dumps(log_stats) + "\n")
+        
+        if args.debug:
+            break
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))

@@ -52,6 +52,11 @@ def plot_mask_pred(
     # MAE reconstruction pasted with visible patches
     im_paste = target * (1 - mask) + pred * mask
 
+    if model.img_mask is not None:
+        img_mask = model.img_mask.cpu()
+    else:
+        img_mask = None
+
     H, W = target.shape[1:3]
     ploth = 2.0
     plotw = (W / H) * ploth
@@ -63,13 +68,13 @@ def plot_mask_pred(
 
     for ii in range(nrow):
         plt.sca(axs[ii, 0])
-        imshow(target[ii], mean=mean, std=std, mask=model.img_mask)
+        imshow(target[ii], mean=mean, std=std, mask=img_mask)
 
         plt.sca(axs[ii, 1])
-        imshow(im_masked[ii], mean=mean, std=std, mask=model.img_mask)
+        imshow(im_masked[ii], mean=mean, std=std, mask=img_mask)
 
         plt.sca(axs[ii, 2])
-        imshow(im_paste[ii], mean=mean, std=std, mask=model.img_mask)
+        imshow(im_paste[ii], mean=mean, std=std, mask=img_mask)
 
     plt.tight_layout(pad=0.25)
     return fig
@@ -85,7 +90,13 @@ def imshow(
     # image: (H, W, C)
     assert image.shape[2] in (1, 3)
     if image.shape[2] == 1:
-        kwargs = {"cmap": "gray", "vmin": 0.0, "vmax": 1.0, **kwargs}
+        kwargs = {
+            "cmap": "gray",
+            "vmin": 0.0,
+            "vmax": 1.0,
+            "interpolation": "nearest",
+            **kwargs,
+        }
     if mean is not None:
         mean = torch.as_tensor(mean)
         std = torch.as_tensor(std)

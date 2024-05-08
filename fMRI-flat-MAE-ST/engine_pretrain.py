@@ -47,7 +47,8 @@ def train_one_epoch(
         "mask_ratio", misc.SmoothedValue(window_size=1, fmt="{value:.6f}")
     )
     header = "Epoch: [{}]".format(epoch)
-    print_freq = 20
+    print_freq = 1 if args.debug else 20
+    debug_steps = 10 * args.accum_iter
     log_wandb = misc.is_main_process() and log_wandb
 
     accum_iter = args.accum_iter
@@ -57,7 +58,9 @@ def train_one_epoch(
     optimizer.zero_grad()
 
     for data_iter_step, (_, samples) in enumerate(
-        metric_logger.log_every(data_loader, print_freq, header)
+        metric_logger.log_every(
+            data_loader, print_freq, header, total_steps=num_batches
+        )
     ):
         # we use a per iteration (instead of per epoch) lr scheduler
         if data_iter_step % accum_iter == 0:
@@ -120,6 +123,9 @@ def train_one_epoch(
                 (data_iter_step / num_batches + epoch) * 1000
             )
             wandb.log({"train_loss": loss_value_reduce, "lr": lr}, step=epoch_1000x)
+
+        if args.debug and (data_iter_step + 1) >= debug_steps:
+            break
 
     if log_wandb:
         fig = vis.plot_mask_pred(model, samples, pred, mask, mean=0.5, std=0.2)

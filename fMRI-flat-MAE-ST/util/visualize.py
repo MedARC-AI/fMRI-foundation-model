@@ -68,13 +68,13 @@ def plot_mask_pred(
 
     for ii in range(nrow):
         plt.sca(axs[ii, 0])
-        imshow(target[ii], mean=mean, std=std, mask=img_mask)
-
-        plt.sca(axs[ii, 1])
         imshow(im_masked[ii], mean=mean, std=std, mask=img_mask)
 
-        plt.sca(axs[ii, 2])
+        plt.sca(axs[ii, 1])
         imshow(im_paste[ii], mean=mean, std=std, mask=img_mask)
+
+        plt.sca(axs[ii, 2])
+        imshow(target[ii], mean=mean, std=std, mask=img_mask)
 
     plt.tight_layout(pad=0.25)
     return fig

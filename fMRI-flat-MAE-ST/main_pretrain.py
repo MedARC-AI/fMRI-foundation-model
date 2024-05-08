@@ -160,7 +160,7 @@ def get_args_parser():
     parser.add_argument("--num_frames", default=16, type=int)
     parser.add_argument(
         "--num_samples",
-        type=int, 
+        type=int,
         default=200000,
         help="number of samples per training epoch",
     )
@@ -218,11 +218,6 @@ def main(args):
 
     cudnn.benchmark = True
 
-    if args.output_dir:
-        if args.name:
-            args.output_dir = f"{args.output_dir}/{args.name}"
-        Path(args.output_dir).mkdir(parents=True)
-
     dataset_train = create_hcp_flat(
         root=args.path_to_data_dir, training=True, frames=args.num_frames
     )
@@ -237,6 +232,11 @@ def main(args):
     data_loader_train = data_loader_train.with_epoch(num_batches)
 
     global_rank = misc.get_rank()
+    if global_rank == 0 and args.output_dir:
+        if args.name:
+            args.output_dir = f"{args.output_dir}/{args.name}"
+        Path(args.output_dir).mkdir(parents=True)
+
     if global_rank == 0 and args.wandb:
         assert has_wandb, "wandb not installed"
         wandb.init(project=PROJECT, name=args.name, config=vars(args))
@@ -333,7 +333,7 @@ def main(args):
                 "a",
             ) as f:
                 f.write(json.dumps(log_stats) + "\n")
-        
+
         if args.debug:
             break
 

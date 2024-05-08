@@ -51,6 +51,8 @@ def train_one_epoch(
     debug_steps = 10 * args.accum_iter
     log_wandb = misc.is_main_process() and log_wandb
 
+    model_without_ddp = model.module if args.distributed else model
+
     accum_iter = args.accum_iter
     if num_batches is None:
         num_batches = len(data_loader)
@@ -128,7 +130,9 @@ def train_one_epoch(
             break
 
     if log_wandb:
-        fig = vis.plot_mask_pred(model, samples, pred, mask, mean=0.5, std=0.2)
+        fig = vis.plot_mask_pred(
+            model_without_ddp, samples, pred, mask, mean=0.5, std=0.2
+        )
         img = vis.fig2pil(fig)
         wandb.log({"train_mask_pred": wandb.Image(img)}, step=epoch_1000x)
 

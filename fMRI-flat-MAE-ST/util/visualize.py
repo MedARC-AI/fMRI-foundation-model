@@ -1,8 +1,10 @@
-from functools import partial
+import io
 from typing import Any, Optional
 
 import torch
 from matplotlib import pyplot as plt
+from matplotlib.figure import Figure
+from PIL import Image
 
 plt.rcParams["figure.dpi"] = 150
 
@@ -92,3 +94,12 @@ def imshow(
         image = mask.unsqueeze(-1) * image
     plt.imshow(image, **kwargs)
     plt.axis("off")
+
+
+def fig2pil(fig: Figure, format: str = "png") -> Image.Image:
+    with io.BytesIO() as f:
+        fig.savefig(f, format=format)
+        f.seek(0)
+        img = Image.open(f)
+        img.load()
+    return img

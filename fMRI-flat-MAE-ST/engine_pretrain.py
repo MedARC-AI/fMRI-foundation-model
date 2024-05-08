@@ -13,7 +13,9 @@ from typing import Iterable
 
 import util.lr_sched as lr_sched
 import util.misc as misc
+import util.visualize as vis
 import torch
+import wandb
 from iopath.common.file_io import g_pathmgr as pathmgr
 
 
@@ -24,9 +26,10 @@ def train_one_epoch(
     device: torch.device,
     epoch: int,
     loss_scaler,
-    log_writer=None,
     args=None,
     fp32=False,
+    num_batches=None,
+    log_wandb=False,
 ):
     model.train(True)
     metric_logger = misc.MetricLogger(delimiter="  ")
@@ -45,21 +48,21 @@ def train_one_epoch(
     )
     header = "Epoch: [{}]".format(epoch)
     print_freq = 20
+    log_wandb = misc.is_main_process() and log_wandb
 
     accum_iter = args.accum_iter
+    if num_batches is None:
+        num_batches = len(data_loader)
 
     optimizer.zero_grad()
 
-    if log_writer is not None:
-        print("log_dir: {}".format(log_writer.log_dir))
-
-    for data_iter_step, (samples, _) in enumerate(
+    for data_iter_step, (_, samples) in enumerate(
         metric_logger.log_every(data_loader, print_freq, header)
     ):
         # we use a per iteration (instead of per epoch) lr scheduler
         if data_iter_step % accum_iter == 0:
             lr_sched.adjust_learning_rate(
-                optimizer, data_iter_step / len(data_loader) + epoch, args
+                optimizer, data_iter_step / num_batches + epoch, args
             )
 
         samples = samples.to(device, non_blocking=True)
@@ -68,7 +71,7 @@ def train_one_epoch(
             samples = samples.reshape(b * r, c, t, h, w)
 
         with torch.cuda.amp.autocast(enabled=not fp32):
-            loss, _, _ = model(
+            loss, pred, mask = model(
                 samples,
                 mask_ratio=args.mask_ratio,
             )
@@ -109,15 +112,19 @@ def train_one_epoch(
         metric_logger.update(lr=lr)
 
         loss_value_reduce = misc.all_reduce_mean(loss_value)
-        if log_writer is not None and (data_iter_step + 1) % accum_iter == 0:
+        if log_wandb and (data_iter_step + 1) % accum_iter == 0:
             """We use epoch_1000x as the x-axis in tensorboard.
             This calibrates different curves when batch size changes.
             """
             epoch_1000x = int(
-                (data_iter_step / len(data_loader) + epoch) * 1000 * args.repeat_aug
+                (data_iter_step / num_batches + epoch) * 1000
             )
-            log_writer.add_scalar("train_loss", loss_value_reduce, epoch_1000x)
-            log_writer.add_scalar("lr", lr, epoch_1000x)
+            wandb.log({"train_loss": loss_value_reduce, "lr": lr}, step=epoch_1000x)
+
+    if log_wandb:
+        fig = vis.plot_mask_pred(model, samples, pred, mask, mean=0.5, std=0.2)
+        img = vis.fig2pil(fig)
+        wandb.log({"train_mask_pred": wandb.Image(img)}, step=epoch_1000x)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()

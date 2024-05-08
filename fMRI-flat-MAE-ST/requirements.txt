@@ -11,3 +11,4 @@ simplejson==3.19.2
 timm==0.9.16
 torch==2.3.0
 torchvision==0.18.0
+wandb==0.17.0

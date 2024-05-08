@@ -10,20 +10,16 @@ import webdataset as wds
 from torch.utils.data import IterableDataset
 
 HCP_FLAT_ROOT = "https://huggingface.co/datasets/bold-ai/HCP-Flat/resolve/main"
-NUM_SHARDS = {"train": 611, "test": 66}
-NUM_SAMPLES = {"train": 100000, "test": 5000}
+NUM_SHARDS = {"train": 1629, "test": 174}
 
 
-def create_hcp_flat_loader(
+def create_hcp_flat(
     root: Optional[str] = None,
     training: bool = True,
     shards: Optional[Union[int, Iterable[int]]] = None,
-    samples: Optional[int] = None,
     frames: int = 16,
-    batch_size: int = 64,
-    num_workers: int = 4,
     cache_dir: Optional[str] = None,
-):
+) -> wds.WebDataset:
     """
     Create HCP-Flat data loader. Yields batches of (keys, images) where keys is a list
     of sample keys and images is a batch of clips, shape (N, C, T, H, W).
@@ -42,11 +38,6 @@ def create_hcp_flat_loader(
     assert (
         min(shards) >= 0 and max(shards) < NUM_SHARDS[split]
     ), f"Invalid shards {shards}; expected in [0, {NUM_SHARDS[split]})"
-
-    samples = samples or NUM_SAMPLES[split]
-    _, world_size, _, _ = wds.utils.pytorch_worker_info()
-    batches = samples // (world_size * batch_size)
-    assert batches > 1, f"Too few samples: {samples} for world and batch size"
 
     urls = [f"{root}/{split}/hcp-flat_{split}_{shard:06d}.tar" for shard in shards]
 
@@ -80,14 +71,8 @@ def create_hcp_flat_loader(
         .decode()
         .map(partial(extract_images, mask=load_hcp_flat_mask()))
         .compose(partial(to_clips, frames=frames))
-        .batched(batch_size, partial=False)
     )
-
-    loader = wds.WebLoader(
-        dataset, batch_size=None, shuffle=False, num_workers=num_workers
-    )
-    loader = loader.with_epoch(batches)
-    return loader
+    return dataset
 
 
 def select_extensions(extensions: Tuple[str, ...]):

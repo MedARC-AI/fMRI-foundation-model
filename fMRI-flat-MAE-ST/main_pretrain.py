@@ -12,27 +12,34 @@ import argparse
 import datetime
 import json
 import os
+import random
 import time
-
-import util.env
+from pathlib import Path
 
 import util.misc as misc
 
 import numpy as np
-import timm
 import torch
 import torch.backends.cudnn as cudnn
+import models_mae
+import webdataset as wds
 from iopath.common.file_io import g_pathmgr as pathmgr
-from mae_st import models_mae
 from engine_pretrain import train_one_epoch
-from util.kinetics import Kinetics
+from util.hcp_flat import create_hcp_flat
+from util.logging import master_print as print
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
-from tensorboard.compat.tensorflow_stub.io.gfile import register_filesystem
-from torch.utils.tensorboard import SummaryWriter
+
+try:
+    import wandb
+    has_wandb = True
+except ImportError:
+    has_wandb = False
+
+PROJECT = "fMRI-foundation-model"
 
 
 def get_args_parser():
-    parser = argparse.ArgumentParser("MAE pre-training", add_help=False)
+    parser = argparse.ArgumentParser("MAE fMRI pre-training", add_help=False)
     parser.add_argument(
         "--batch_size",
         default=4,
@@ -50,13 +57,11 @@ def get_args_parser():
     # Model parameters
     parser.add_argument(
         "--model",
-        default="mae_vit_large_patch16",
+        default="mae_vit_base_patch16_fmri",
         type=str,
         metavar="MODEL",
         help="Name of model to train",
     )
-
-    parser.add_argument("--input_size", default=224, type=int, help="images input size")
 
     parser.add_argument(
         "--mask_ratio",
@@ -104,8 +109,9 @@ def get_args_parser():
     )
     parser.add_argument(
         "--path_to_data_dir",
-        default="",
-        help="path where to save, empty for no saving",
+        type=str,
+        default=None,
+        help="local path for HCP-Flat data",
     )
     parser.add_argument(
         "--output_dir",
@@ -113,10 +119,9 @@ def get_args_parser():
         help="path where to save, empty for no saving",
     )
     parser.add_argument(
-        "--log_dir",
-        default="",
-        help="path where to tensorboard log",
+        "--name", type=str, default=None, help="name for current run",
     )
+    parser.add_argument("--wandb", action="store_true", help="enable wandb logging")
     parser.add_argument(
         "--device", default="cuda", help="device to use for training / testing"
     )
@@ -153,10 +158,14 @@ def get_args_parser():
     parser.add_argument("--decoder_num_heads", default=16, type=int)
     parser.add_argument("--t_patch_size", default=2, type=int)
     parser.add_argument("--num_frames", default=16, type=int)
+    parser.add_argument(
+        "--num_samples",
+        type=int, 
+        default=200000,
+        help="number of samples per training epoch",
+    )
     parser.add_argument("--checkpoint_period", default=1, type=int)
-    parser.add_argument("--sampling_rate", default=4, type=int)
     parser.add_argument("--distributed", action="store_true")
-    parser.add_argument("--repeat_aug", default=4, type=int)
     parser.add_argument(
         "--clip_grad",
         type=float,
@@ -176,18 +185,6 @@ def get_args_parser():
         action="store_true",
     )
     parser.set_defaults(fp32=True)
-    parser.add_argument(
-        "--jitter_scales_relative",
-        default=[0.5, 1.0],
-        type=float,
-        nargs="+",
-    )
-    parser.add_argument(
-        "--jitter_aspect_relative",
-        default=[0.75, 1.3333],
-        type=float,
-        nargs="+",
-    )
     parser.add_argument(
         "--beta",
         default=None,
@@ -214,50 +211,34 @@ def main(args):
 
     # fix the seed for reproducibility
     seed = args.seed + misc.get_rank()
+    random.seed(seed)
     torch.manual_seed(seed)
     np.random.seed(seed)
 
     cudnn.benchmark = True
 
-    dataset_train = Kinetics(
-        mode="pretrain",
-        path_to_data_dir=args.path_to_data_dir,
-        sampling_rate=args.sampling_rate,
-        num_frames=args.num_frames,
-        train_jitter_scales=(256, 320),
-        repeat_aug=args.repeat_aug,
-        jitter_aspect_relative=args.jitter_aspect_relative,
-        jitter_scales_relative=args.jitter_scales_relative,
+    if args.output_dir:
+        if args.name:
+            args.output_dir = f"{args.output_dir}/{args.name}"
+        Path(args.output_dir).mkdir(parents=True)
+
+    dataset_train = create_hcp_flat(
+        root=args.path_to_data_dir, training=True, frames=args.num_frames
     )
-    if args.distributed:
-        num_tasks = misc.get_world_size()
-        global_rank = misc.get_rank()
-        sampler_train = torch.utils.data.DistributedSampler(
-            dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
-        )
-        print("Sampler_train = %s" % str(sampler_train))
-    else:
-        num_tasks = 1
-        global_rank = 0
-        sampler_train = torch.utils.data.RandomSampler(dataset_train)
-
-    if global_rank == 0 and args.log_dir is not None:
-        try:
-            pathmgr.mkdirs(args.log_dir)
-        except Exception as _:
-            pass
-        log_writer = SummaryWriter(log_dir=args.log_dir)
-    else:
-        log_writer = None
-
-    data_loader_train = torch.utils.data.DataLoader(
-        dataset_train,
-        sampler=sampler_train,
-        batch_size=args.batch_size,
+    data_loader_train = wds.WebLoader(
+        dataset_train.batched(args.batch_size, partial=False),
+        batch_size=None,
+        shuffle=False,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
-        drop_last=True,
     )
+    num_batches = args.num_samples // (misc.get_world_size() * args.batch_size)
+    data_loader_train = data_loader_train.with_epoch(num_batches)
+
+    global_rank = misc.get_rank()
+    if global_rank == 0 and args.wandb:
+        assert has_wandb, "wandb not installed"
+        wandb.init(project=PROJECT, name=args.name, config=vars(args))
 
     # define the model
     model = models_mae.__dict__[args.model](
@@ -316,8 +297,6 @@ def main(args):
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
-        if args.distributed:
-            data_loader_train.sampler.set_epoch(epoch)
         train_stats = train_one_epoch(
             model,
             data_loader_train,
@@ -325,9 +304,10 @@ def main(args):
             device,
             epoch,
             loss_scaler,
-            log_writer=log_writer,
             args=args,
             fp32=args.fp32,
+            num_batches=num_batches,
+            log_wandb=args.wandb,
         )
         if args.output_dir and (
             epoch % args.checkpoint_period == 0 or epoch + 1 == args.epochs
@@ -347,8 +327,6 @@ def main(args):
         }
 
         if args.output_dir and misc.is_main_process():
-            if log_writer is not None:
-                log_writer.flush()
             with pathmgr.open(
                 f"{args.output_dir}/log.txt",
                 "a",
@@ -362,23 +340,7 @@ def main(args):
     return [checkpoint_path]
 
 
-def launch_one_thread(
-    local_rank,
-    shard_rank,
-    num_gpus_per_node,
-    num_shards,
-    init_method,
-    output_path,
-    opts,
-    stats_queue,
-):
-    print(opts)
-    args = get_args_parser()
-    args = args.parse_args(opts)
-    args.rank = shard_rank * num_gpus_per_node + local_rank
-    args.world_size = num_shards * num_gpus_per_node
-    args.gpu = local_rank
-    args.dist_url = init_method
-    args.output_dir = output_path
-    output = main(args)
-    stats_queue.put(output)
+if __name__ == "__main__":
+    parser = get_args_parser()
+    args = parser.parse_args()
+    main(args)

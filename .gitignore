@@ -11,3 +11,4 @@ data
 .venv
 .vscode
 **/.scratch
+**/slurm-*.out

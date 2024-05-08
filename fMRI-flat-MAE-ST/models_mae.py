@@ -154,26 +154,7 @@ class MaskedAutoencoderViT(nn.Module):
 
         self.norm_pix_loss = norm_pix_loss
 
-        # mask of valid pixels
-        if img_mask is not None:
-            img_mask = torch.as_tensor(img_mask > 0)
-            patch_mask = rearrange(
-                img_mask,
-                "(h ph) (w pw) -> (h w) (ph pw)",
-                ph=patch_size,
-                pw=patch_size,
-            ).any(dim=1)
-            patch_mask_indices, = patch_mask.nonzero(as_tuple=True)
-            self.register_buffer("img_mask", img_mask)
-            self.register_buffer("patch_mask", patch_mask)
-            self.register_buffer("patch_mask_indices", patch_mask_indices)
-            self.n_mask_patches = patch_mask.sum().item()
-        else:
-            self.register_buffer("img_mask", None)
-            self.register_buffer("patch_mask", None)
-            self.register_buffer("patch_mask_indices", None)
-            self.n_mask_patches = None
-
+        self.initialize_mask(img_mask)
         self.initialize_weights()
 
         print("model initialized")
@@ -217,6 +198,37 @@ class MaskedAutoencoderViT(nn.Module):
         elif isinstance(m, nn.LayerNorm):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
+
+    def initialize_mask(self, img_mask):
+        if img_mask is not None:
+            img_mask = torch.as_tensor(img_mask > 0).float()
+
+            H, W = img_mask.shape
+            img_mask_patches = self.patchify(
+                img_mask
+                .view(1, 1, 1, H, W)
+                .repeat(1, self.patch_embed.in_chans, self.pred_t_dim, 1, 1)
+            )
+
+            patch_mask = rearrange(
+                img_mask,
+                "(h ph) (w pw) -> (h w) (ph pw)",
+                ph=self.patch_embed.patch_size[0],
+                pw=self.patch_embed.patch_size[1],
+            ).any(dim=1).float()
+            patch_mask_indices, = patch_mask.nonzero(as_tuple=True)
+
+            self.register_buffer("img_mask", img_mask)
+            self.register_buffer("img_mask_patches", img_mask_patches)
+            self.register_buffer("patch_mask", patch_mask)
+            self.register_buffer("patch_mask_indices", patch_mask_indices)
+            self.n_mask_patches = len(patch_mask_indices)
+        else:
+            self.register_buffer("img_mask", None)
+            self.register_buffer("img_mask_patches", None)
+            self.register_buffer("patch_mask", None)
+            self.register_buffer("patch_mask_indices", None)
+            self.n_mask_patches = None
 
     def patchify(self, imgs):
         """
@@ -272,7 +284,7 @@ class MaskedAutoencoderViT(nn.Module):
         # shift missing patches to not be selected
         if self.img_mask is not None:
             noise = noise.view(N, T, H * W)
-            noise = noise + ~self.patch_mask
+            noise = noise + (1.0 - self.patch_mask)
             noise = noise.view(N, L)
 
         # sort noise for each sample
@@ -433,21 +445,19 @@ class MaskedAutoencoderViT(nn.Module):
         # predictor projection
         x = self.decoder_pred(x)
 
+        if self.cls_embed:
+            # remove cls token
+            x = x[:, 1:, :]
+
         # fill outside mask with zeros
         if self.img_mask is not None:
-            if self.cls_embed:
-                x = x[:, 1:, :]
+            C = x.shape[-1]
             x = x.view([N, T, self.n_mask_patches, C])
             x_ = torch.zeros([N, T, H * W, C], dtype=x.dtype, device=x.device)
             x = x_.scatter(
                 2, self.patch_mask_indices.view(1, 1, -1, 1).expand(N, T, -1, C), x,
             )
             x = x.view([N, T * H * W, C])
-        elif self.cls_embed:
-            # remove cls token
-            x = x[:, 1:, :]
-        else:
-            x = x[:, :, :]
 
         return x
 
@@ -478,10 +488,11 @@ class MaskedAutoencoderViT(nn.Module):
             target = (target - mean) / (var + 1.0e-6) ** 0.5
 
         loss = (pred - target) ** 2
-        loss = loss.mean(dim=-1)  # [N, L], mean loss per patch
         if self.img_mask is not None:
-            mask = mask.view(N, T, H*W) * self.patch_mask
-        mask = mask.view(loss.shape)
+            # exclude missing pixels from loss
+            mask = mask.unsqueeze(-1) * self.img_mask_patches
+        else:
+            loss = loss.mean(dim=-1)  # [N, L], mean loss per patch
 
         loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
         return loss
@@ -532,7 +543,7 @@ def mae_vit_huge_patch14(**kwargs):
     return model
 
 
-def mae_vit_small_patch16_hcpflat(**kwargs):
+def mae_vit_small_patch16_fmri(**kwargs):
     model = MaskedAutoencoderViT(
         img_size=(144, 320),
         patch_size=16,
@@ -548,7 +559,7 @@ def mae_vit_small_patch16_hcpflat(**kwargs):
     return model
 
 
-def mae_vit_base_patch16_hcpflat(**kwargs):
+def mae_vit_base_patch16_fmri(**kwargs):
     model = MaskedAutoencoderViT(
         img_size=(144, 320),
         patch_size=16,
@@ -564,7 +575,7 @@ def mae_vit_base_patch16_hcpflat(**kwargs):
     return model
 
 
-def mae_vit_large_patch16_hcpflat(**kwargs):
+def mae_vit_large_patch16_fmri(**kwargs):
     model = MaskedAutoencoderViT(
         img_size=(144, 320),
         patch_size=16,
@@ -580,7 +591,7 @@ def mae_vit_large_patch16_hcpflat(**kwargs):
     return model
 
 
-def mae_vit_huge_patch16_hcpflat(**kwargs):
+def mae_vit_huge_patch16_fmri(**kwargs):
     model = MaskedAutoencoderViT(
         img_size=(144, 320),
         patch_size=16,

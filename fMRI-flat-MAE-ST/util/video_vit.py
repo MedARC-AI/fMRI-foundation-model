@@ -46,6 +46,7 @@ class PatchEmbed(nn.Module):
         )
         self.img_size = img_size
         self.patch_size = patch_size
+        self.in_chans = in_chans
 
         self.frames = frames
         self.t_patch_size = t_patch_size

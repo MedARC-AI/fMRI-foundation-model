@@ -20,7 +20,6 @@ import util.logging as logging
 import psutil
 import torch
 import torch.distributed as dist
-# import torch.fb.rendezvous.zeus
 from iopath.common.file_io import g_pathmgr as pathmgr
 from util.logging import master_print as print
 from torch import inf

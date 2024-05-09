@@ -21,8 +21,8 @@ def create_hcp_flat(
     cache_dir: Optional[str] = None,
 ) -> wds.WebDataset:
     """
-    Create HCP-Flat data loader. Yields batches of (keys, images) where keys is a list
-    of sample keys and images is a batch of clips, shape (N, C, T, H, W).
+    Create HCP-Flat dataset. Yields samples of (key, images) where key is the webdataset
+    sample key and images is shape (C, T, H, W).
 
     References:
         https://github.com/webdataset/webdataset/issues/250#issuecomment-1454094496

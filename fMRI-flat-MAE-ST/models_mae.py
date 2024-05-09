@@ -467,9 +467,6 @@ class MaskedAutoencoderViT(nn.Module):
         pred: [N, t*h*w, u*p*p*C]
         mask: [N, t*h*w], 0 is keep, 1 is remove,
         """
-        N = imgs.size(0)
-        T = self.patch_embed.t_grid_size
-        H, W = self.patch_embed.grid_size
         _imgs = torch.index_select(
             imgs,
             2,

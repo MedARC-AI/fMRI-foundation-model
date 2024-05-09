@@ -184,6 +184,11 @@ def get_args_parser():
         "--fp32",
         action="store_true",
     )
+    parser.add_argument(
+        "--no_fp32",
+        action="store_false",
+        dest="fp32",
+    )
     parser.set_defaults(fp32=True)
     parser.add_argument(
         "--beta",

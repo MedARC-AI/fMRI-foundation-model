@@ -81,7 +81,6 @@ class Attention(nn.Module):
         qk_scale=None,
         attn_drop=0.0,
         proj_drop=0.0,
-        input_size=(4, 14, 14),
     ):
         super().__init__()
         assert dim % num_heads == 0, "dim should be divisible by num_heads"
@@ -92,11 +91,10 @@ class Attention(nn.Module):
         self.q = nn.Linear(dim, dim, bias=qkv_bias)
         self.k = nn.Linear(dim, dim, bias=qkv_bias)
         self.v = nn.Linear(dim, dim, bias=qkv_bias)
+        self.attn = nn.Softmax(dim=-1)  # for hook to capture attn
         assert attn_drop == 0.0  # do not use
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
-        self.input_size = input_size
-        assert input_size[1] == input_size[2]
 
     def forward(self, x):
         B, N, C = x.shape
@@ -118,7 +116,7 @@ class Attention(nn.Module):
 
         attn = (q @ k.transpose(-2, -1)) * self.scale
 
-        attn = attn.softmax(dim=-1)
+        attn = self.attn(attn)
 
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)

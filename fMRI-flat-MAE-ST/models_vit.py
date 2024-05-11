@@ -14,9 +14,11 @@ from functools import partial
 
 import torch
 import torch.nn as nn
-from mae_st.util.logging import master_print as print
+from einops import rearrange
+from util.logging import master_print as print
+from util.hcp_flat import load_hcp_flat_mask
 
-from mae_st.util.video_vit import Attention, Block, PatchEmbed
+from util.video_vit import Block, PatchEmbed
 
 
 class VisionTransformer(nn.Module):
@@ -24,8 +26,6 @@ class VisionTransformer(nn.Module):
 
     def __init__(
         self,
-        num_frames,
-        t_patch_size,
         img_size=224,
         patch_size=16,
         in_chans=3,
@@ -34,15 +34,15 @@ class VisionTransformer(nn.Module):
         depth=12,
         num_heads=12,
         mlp_ratio=4.0,
+        num_frames=16,
+        t_patch_size=2,
         no_qkv_bias=False,
-        qk_scale=None,
-        drop_rate=0.0,
-        attn_drop_rate=0.0,
         drop_path_rate=0.0,
         norm_layer=nn.LayerNorm,
         dropout=0.5,
-        sep_pos_embed=False,
-        cls_embed=False,
+        sep_pos_embed=True,
+        cls_embed=True,
+        img_mask=None,
         **kwargs,
     ):
         super().__init__()
@@ -95,10 +95,6 @@ class VisionTransformer(nn.Module):
                     qk_scale=None,
                     norm_layer=norm_layer,
                     drop_path=dpr[i],
-                    attn_func=partial(
-                        Attention,
-                        input_size=self.patch_embed.input_size,
-                    ),
                 )
                 for i in range(depth)
             ]
@@ -111,6 +107,30 @@ class VisionTransformer(nn.Module):
 
         torch.nn.init.normal_(self.head.weight, std=0.02)
 
+        self.initialize_mask(img_mask)
+
+    def initialize_mask(self, img_mask):
+        if img_mask is not None:
+            img_mask = torch.as_tensor(img_mask > 0).float()
+
+            patch_mask = rearrange(
+                img_mask,
+                "(h ph) (w pw) -> (h w) (ph pw)",
+                ph=self.patch_embed.patch_size[0],
+                pw=self.patch_embed.patch_size[1],
+            ).any(dim=1).float()
+            patch_mask_indices, = patch_mask.nonzero(as_tuple=True)
+
+            self.register_buffer("img_mask", img_mask)
+            self.register_buffer("patch_mask", patch_mask)
+            self.register_buffer("patch_mask_indices", patch_mask_indices)
+            self.n_mask_patches = len(patch_mask_indices)
+        else:
+            self.register_buffer("img_mask", None)
+            self.register_buffer("patch_mask", None)
+            self.register_buffer("patch_mask_indices", None)
+            self.n_mask_patches = None
+
     @torch.jit.ignore
     def no_weight_decay(self):
         return {
@@ -121,7 +141,7 @@ class VisionTransformer(nn.Module):
             "pos_embed_class",
         }
 
-    def forward(self, x):
+    def forward_features(self, x):
         # embed patches
         x = self.patch_embed(x)
         N, T, L, C = x.shape  # T: temporal; L: spatial
@@ -154,29 +174,47 @@ class VisionTransformer(nn.Module):
             pos_embed = self.pos_embed[:, :, :]
         x = x + pos_embed
 
-        # reshape to [N, T, L, C] or [N, T*L, C]
-        requires_t_shape = (
-            len(self.blocks) > 0  # support empty decoder
-            and hasattr(self.blocks[0].attn, "requires_t_shape")
-            and self.blocks[0].attn.requires_t_shape
-        )
-        if requires_t_shape:
+        # drop patches outside image mask
+        if self.img_mask is not None:
+            if self.cls_embed:
+                cls_tokens, x = x[:, :1, :], x[:, 1:, :]
             x = x.view([N, T, L, C])
+            x = x[:, :, self.patch_mask_indices]
+            x = x.view([N, T * self.n_mask_patches, C])
+            if self.cls_embed:
+                x = torch.cat((cls_tokens, x), dim=1)
 
         # apply Transformer blocks
         for blk in self.blocks:
             x = blk(x)
+        return x
 
-        if requires_t_shape:
-            x = x.view([N, T * L, C])
-
+    def forward_head(self, x):
         # classifier
-        x = x[:, 1:, :].mean(dim=1)  # global pool
+        if self.cls_embed:
+            x = x[:, 1:, :]
+        x = x.mean(dim=1)  # global pool
         x = self.norm(x)
         # x = self.fc_norm(x)
         x = self.dropout(x)
         x = self.head(x)
 
+        return x
+
+    def forward(self, x):
+        x = self.forward_features(x)
+        x = self.forward_head(x)
+        return x
+
+    def mask_fill(self, x):
+        N, _, C = x.shape
+        T = self.patch_embed.t_grid_size
+        H, W = self.patch_embed.grid_size
+        x = x.view(N, T, -1, C)
+        x_ = torch.zeros([N, T, H * W, C], dtype=x.dtype, device=x.device)
+        x = x_.scatter(
+            2, self.patch_mask_indices.view(1, 1, -1, 1).expand(N, T, -1, C), x,
+        )
         return x
 
 
@@ -214,6 +252,70 @@ def vit_huge_patch14(**kwargs):
         num_heads=16,
         mlp_ratio=4,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        **kwargs,
+    )
+    return model
+
+
+def vit_small_patch16_fmri(**kwargs):
+    model = VisionTransformer(
+        img_size=(144, 320),
+        patch_size=16,
+        in_chans=1,
+        embed_dim=384,
+        depth=12,
+        num_heads=6,
+        mlp_ratio=4,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        img_mask=load_hcp_flat_mask(),
+        **kwargs,
+    )
+    return model
+
+
+def vit_base_patch16_fmri(**kwargs):
+    model = VisionTransformer(
+        img_size=(144, 320),
+        patch_size=16,
+        in_chans=1,
+        embed_dim=768,
+        depth=12,
+        num_heads=12,
+        mlp_ratio=4,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        img_mask=load_hcp_flat_mask(),
+        **kwargs,
+    )
+    return model
+
+
+def vit_large_patch16_fmri(**kwargs):
+    model = VisionTransformer(
+        img_size=(144, 320),
+        patch_size=16,
+        in_chans=1,
+        embed_dim=1024,
+        depth=24,
+        num_heads=16,
+        mlp_ratio=4,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        img_mask=load_hcp_flat_mask(),
+        **kwargs,
+    )
+    return model
+
+
+def vit_huge_patch16_fmri(**kwargs):
+    model = VisionTransformer(
+        img_size=(144, 320),
+        patch_size=16,
+        in_chans=1,
+        embed_dim=1280,
+        depth=32,
+        num_heads=16,
+        mlp_ratio=4,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        img_mask=load_hcp_flat_mask(),
         **kwargs,
     )
     return model

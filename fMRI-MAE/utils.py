@@ -12,6 +12,7 @@ import nibabel as nib
 from nilearn import plotting
 import matplotlib.pyplot as plt
 import re
+import torch.nn.functional as F
 
 def my_split_by_node(urls): return urls
 
@@ -80,6 +81,32 @@ def get_brain_pos_patches(
 
     return func
 
+def crop_or_pad(tensor, new_shape):
+    # Ensure the tensor has at least three dimensions
+    if tensor.dim() < 3:
+        raise ValueError("Tensor must have at least 3 dimensions")
+
+    # Current dimensions of the last three axes
+    current_shape = tensor.shape[-3:]
+
+    # Compute padding and cropping needed for each dimension
+    padding_crop = [(ns - cs) for ns, cs in zip(new_shape, current_shape)]
+    if sum(padding_crop)==0:
+        return tensor
+
+    # Apply cropping if necessary
+    if any(pc < 0 for pc in padding_crop):
+        crop_slices = [slice(-pc//2, ns-pc//2) if pc < 0 else slice(None) for pc, ns in zip(padding_crop, new_shape)]
+        tensor = tensor[..., crop_slices[0], crop_slices[1], crop_slices[2]]
+
+    # Calculate padding to apply after cropping if necessary
+    pad_values = [(max(0, pc)//2, max(0, pc) - max(0, pc)//2) for pc in padding_crop]
+
+    # Apply padding
+    tensor = F.pad(tensor, pad_values[2] + pad_values[1] + pad_values[0])
+
+    return tensor
+
 
 class DataPrepper:
     def __init__(
@@ -90,6 +117,7 @@ class DataPrepper:
         patch_height=8,
         patch_width=8,
         frame_patch_size=1,
+        image_size=[88, 104, 72]
     ):
         self.num_frames = num_frames
         self.masking_strategy = masking_strategy
@@ -97,12 +125,16 @@ class DataPrepper:
         self.patch_height = 8
         self.patch_width = 8
         self.frame_patch_size = 1
+        self.image_size=image_size
 
     def __call__(self, func):
         start_timepoint = np.random.choice(np.arange(func.shape[1] - self.num_frames))
         timepoints = np.arange(start_timepoint, start_timepoint + self.num_frames)
 
         func = func[:,timepoints]
+
+        # crop image_size acc to config
+        func = crop_or_pad(func, self.image_size)
 
         if self.masking_strategy=="MNI" or self.masking_strategy=="None":
             return func, None

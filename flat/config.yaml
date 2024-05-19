@@ -1,9 +1,16 @@
-# Model Config
 model_name: "flat_probe_Linear_normed"
-use_cls_token: False
-use_contrastive_loss: True
-contrastive_loss_weight: 0.025
 hcp_flat_path: "/weka/proj-fmri/shared/hcp_flat"
+
+decoder_embed_dim: 512
+num_frames: 16
+mask_ratio: .75
+pred_t_dim: 8
+t_patch_size: 2
+cls_embed: True
+no_qkv_bias: False
+sep_pos_embed: True
+trunc_init: False
+norm_pix_loss: False
 
 # Training Configs
 batch_size: 32
@@ -22,37 +29,3 @@ ckpt_interval: 20 # in epochs
 print_interval: 20 # in steps
 resume_from_ckpt: True
 wandb_log: True
-
-# MAE Config
-tube_start_masking_ratio: 0.90
-tube_end_masking_ratio: 0.90
-decoder_mask_ratio: 0.90
-
-norm_pix_loss: False
-
-# Model Config
-patch_size: [8,8,8]
-frame_patch_size: 1
-use_rope_emb: True
-masking_strategy: "None" #"MNI" #"conservative" #"None"
-
-# ViT Config
-encoder_model: "vit_small"
-decoder_model: "vit_small"
-
-# Data Config
-img_size: [88, 104, 72] # Image Size #104
-num_frames: 1
-is_s3: False
-# train_urls: ["/weka/proj-fmri/shared/NSD_MNI_wds/{000000,000001,000200,000201}.tar"]
-test_urls: ["/weka/proj-fmri/shared/NSD_MNI_wds/000000.tar"]
-train_urls: ["/weka/proj-fmri/shared/NSD_MNI_wds/{000001..000736}.tar"]
-# test_urls: ["/weka/proj-fmri/shared/NSD_MNI_wds/{000700..000738}.tar"]
-# train_urls: ["s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000000..000494}.tar","s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000496..000740}.tar"]
-
-#"/weka/proj-fmri/paulscotti/old_fMRI-foundation-model/dataset_creation/wds_creation/wds/000000.tar"
-#"s3://proj-fmri/fmri_foundation_datasets/NSD_MNI_wds/{000000..000740}.tar"
-# test_urls: "s3://proj-fmri/fmri_foundation_datasets/openneuro_MNI_wds/000000.tar"
-# train_urls: "/weka/proj-fmri/paulscotti/old_fMRI-foundation-model/dataset_creation/wds_creation/wds/{000001..000240}.tar"
-# train_urls: "/weka/proj-fmri/paulscotti/fMRI-foundation-model/dataset_creation/wds_creation/wds/{000000..000382}.tar"
-# test_urls: "/weka/proj-fmri/paulscotti/old_fMRI-foundation-model/dataset_creation/wds_creation/wds/000000.tar"

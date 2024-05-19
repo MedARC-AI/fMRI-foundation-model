@@ -1,4 +1,6 @@
+datasets==2.19.1
 einops==0.8.0
+elbow==0.1.1
 iopath==0.1.10
 ipython==8.24.0
 jupyter==1.0.0

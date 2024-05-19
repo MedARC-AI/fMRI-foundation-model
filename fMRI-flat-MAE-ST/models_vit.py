@@ -140,7 +140,7 @@ class VisionTransformer(nn.Module):
             "pos_embed_class",
         }
 
-    def forward_features(self, x):
+    def forward_features(self, x, global_pool=True):
         # embed patches
         x = self.patch_embed(x)
         N, T, L, C = x.shape  # T: temporal; L: spatial
@@ -186,13 +186,15 @@ class VisionTransformer(nn.Module):
         # apply Transformer blocks
         for blk in self.blocks:
             x = blk(x)
+
+        if global_pool:
+            if self.cls_embed:
+                x = x[:, 1:, :]
+            x = x.mean(dim=1)
         return x
 
     def forward_head(self, x):
         # classifier
-        if self.cls_embed:
-            x = x[:, 1:, :]
-        x = x.mean(dim=1)  # global pool
         x = self.norm(x)
         # x = self.fc_norm(x)
         x = self.dropout(x)

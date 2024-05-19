@@ -24,6 +24,7 @@ import torch.backends.cudnn as cudnn
 import models_mae
 import webdataset as wds
 from iopath.common.file_io import g_pathmgr as pathmgr
+from torch.utils.data import default_collate
 from engine_pretrain import train_one_epoch
 from util.hcp_flat import create_hcp_flat
 from util.logging import master_print as print
@@ -229,10 +230,12 @@ def main(args):
     cudnn.benchmark = True
 
     dataset_train = create_hcp_flat(
-        root=args.path_to_data_dir, training=True, frames=args.num_frames
+        root=args.path_to_data_dir, split="train", frames=args.num_frames
     )
     data_loader_train = wds.WebLoader(
-        dataset_train.batched(args.batch_size, partial=False),
+        dataset_train.batched(
+            args.batch_size, collation_fn=default_collate, partial=False
+        ),
         batch_size=None,
         shuffle=False,
         num_workers=args.num_workers,

@@ -59,7 +59,7 @@ def train_one_epoch(
 
     optimizer.zero_grad()
 
-    for data_iter_step, (_, samples) in enumerate(
+    for data_iter_step, (samples, _) in enumerate(
         metric_logger.log_every(
             data_loader, print_freq, header, total_steps=num_batches
         )

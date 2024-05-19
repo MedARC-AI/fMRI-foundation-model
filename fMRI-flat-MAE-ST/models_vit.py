@@ -46,7 +46,6 @@ class VisionTransformer(nn.Module):
         **kwargs,
     ):
         super().__init__()
-        print(locals())
 
         self.sep_pos_embed = sep_pos_embed
         # --------------------------------------------------------------------------
@@ -207,9 +206,11 @@ class VisionTransformer(nn.Module):
         return x
 
     def mask_fill(self, x):
-        N, _, C = x.shape
+        N, L, C = x.shape
         T = self.patch_embed.t_grid_size
         H, W = self.patch_embed.grid_size
+        assert L == T * self.n_mask_patches
+
         x = x.view(N, T, -1, C)
         x_ = torch.zeros([N, T, H * W, C], dtype=x.dtype, device=x.device)
         x = x_.scatter(

@@ -14,7 +14,7 @@ def random_data() -> torch.Tensor:
     return x
 
 
-def test_vit_small_patch16_hcpflat(random_data: torch.Tensor):
+def test_vit_small_patch16_fmri(random_data: torch.Tensor):
     model = vit_small_patch16_fmri(
         t_patch_size=2, cls_embed=True, sep_pos_embed=True
     )

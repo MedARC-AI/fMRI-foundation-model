@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --account=fmri
-#SBATCH --partition=h80i
+#SBATCH --partition=p5
 #SBATCH --job-name=found
 #SBATCH --ntasks-per-node=1
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:3
-#SBATCH --gpus-per-task=3       # Set to equal gres=gpu:#!
+#SBATCH --gres=gpu:1
+#SBATCH --gpus-per-task=1       # Set to equal gres=gpu:#!
 #SBATCH --cpus-per-task=176     # 40 / 80 / 176 distributed across node
 #SBATCH --time=23:00:00         # total run time limit (HH:MM:SS)
 #SBATCH -e slurms/%j.err        # first create a "slurms" folder in current directory to store logs
@@ -13,7 +13,7 @@
 #SBATCH --comment=medarc
 #SBATCH --no-requeue
 
-export NUM_GPUS=3 # Set to equal gres=gpu:#!
+export NUM_GPUS=1 # Set to equal gres=gpu:#!
 echo NUM_GPUS=$NUM_GPUS
 
 source ~/.bashrc

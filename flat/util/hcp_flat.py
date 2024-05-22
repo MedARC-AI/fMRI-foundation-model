@@ -67,10 +67,10 @@ def create_hcp_flat(
             select_files=select_extensions(("bold.npy","meta.json")),
             cache_dir=cache_dir,
         )
-        .shuffle(1000 if training else 0)
         .decode()
         .map(partial(extract_images, mask=load_hcp_flat_mask()))
         .compose(to_clips(frames))
+        .shuffle(2500 if training else 0)
     )
     return dataset
 
@@ -110,7 +110,7 @@ def to_clips(frames: int = 16):
         for key, images, meta in src:
             offset = random.randint(0, frames)
             for start in range(offset, images.shape[1] - frames, frames):
-                yield key, images[:, start : start + frames], meta
+                yield key, images[:, start : start + frames].copy(), meta
     return _filter
 
 

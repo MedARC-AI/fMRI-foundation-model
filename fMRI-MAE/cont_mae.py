@@ -15,6 +15,7 @@ import random
 import h5py
 import webdataset as wds
 import gc
+import shutil
 import matplotlib.pyplot as plt
 
 import torch
@@ -159,6 +160,8 @@ model = get_vit(
     channels=1,
     use_rope_emb=use_rope_emb,
     use_cls_token=use_cls_token,
+    use_decoder_same_emb_dim=use_decoder_same_emb_dim,
+    decoder_depth=decoder_depth
 )
 utils.count_params(model)
 
@@ -342,13 +345,25 @@ def save_ckpt(model,tag="last"):
     if global_rank == 0:
         os.makedirs(outdir,exist_ok=True)
         ckpt_path = outdir+f'/{tag}.pth'
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': model_states,
-            'optimizer_state_dict': optimizer.state_dict(),
-        }, ckpt_path)
-        print(f"\n---saved {ckpt_path}!---\n")
-
+        
+        if tag == "last" and os.path.exists(ckpt_path):
+            shutil.copyfile(os.path.join(outdir, f'{tag}.pth'), os.path.join(outdir, f'{tag}_old.pth'))
+        # print(f'saving {ckpt_path}',flush=True)
+        if tag=='last':
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model_states,
+                'optimizer_state_dict': optimizer.state_dict(),
+                }, ckpt_path)
+        else:
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model_states,
+                }, ckpt_path)
+            
+        if tag == "last" and os.path.exists(os.path.join(outdir, f'{tag}_old.pth')):
+            os.remove(os.path.join(outdir, f'{tag}_old.pth'))
+    print(f"\n---saved {ckpt_path}!---\n")
 
 if utils.is_interactive():
 #     wandb_log = False
@@ -404,6 +419,7 @@ epoch = 0
 lrs, train_losses, recon_losses, contrastive_losses = [], [], [], []
 cos_sim_encoder_output, cos_sim_decoder_output, cos_sim_encoder_output_patchwise = [], [], []
 probe_losses, probe_accs, test_losses, test_accs = [], [], [], []
+cos_sim_encoder_output_patchwise_test, cos_sim_encoder_output_test = [], []
 
 
 if masking_strategy=="MNI":
@@ -419,6 +435,30 @@ if masking_strategy=="MNI":
         )(torch.Tensor(brain_pos_voxels)[None,None,None])
     brain_pos_pats_vit = rearrange(brain_pos_pats, "b ... d -> b (...) d").mean(-1)[0]
 
+# auto resume
+if os.path.exists(os.path.join(outdir, 'last.pth')) or os.path.exists(os.path.join(outdir, 'last_old.pth')):
+    if os.path.exists(os.path.join(outdir, 'last_old.pth')):
+        if os.path.exists(os.path.join(outdir, 'last.pth')):
+            # this is corrupted
+            os.remove(os.path.join(outdir, f'last.pth'))
+        # set last_old as last
+        shutil.move(os.path.join(outdir, f'last_old.pth'), os.path.join(outdir, f'last.pth'))
+    
+    ckpt_path = os.path.join(outdir, 'last.pth')
+    resume_from_ckpt = True
+
+
+if resume_from_ckpt:
+    print("\n---resuming from ckpt_path---\n", ckpt_path)
+    checkpoint = torch.load(ckpt_path, map_location=device)
+    epoch = checkpoint['epoch']+1
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])        
+    model.load_state_dict(checkpoint['model_state_dict'])
+    total_steps_done = epoch*num_iterations_per_epoch
+    for _ in range(total_steps_done):
+        lr_scheduler.step()
+    del checkpoint
+    torch.cuda.empty_cache()
 
 mse = nn.MSELoss()
 l1 = nn.L1Loss()
@@ -554,7 +594,7 @@ for epoch in progress_bar:
                 contrastive_losses.append(contr_loss.item())
                 loss += (contr_loss * contrastive_loss_weight)
 
-            cos_sim_encoder_output_patchwise.append(utils.patchwise_cosine_similarity(encoder_out).mean().item())
+            cos_sim_encoder_output_patchwise.append(utils.patchwise_cosine_similarity(encoder_out)[~torch.eye(encoder_out.shape[1], dtype=bool)[None].expand(encoder_out.shape[0],-1,-1)].mean().item())
             cos_sim_encoder_output.append(utils.batchwise_cosine_similarity(encoder_out.flatten(1)/1e3,encoder_out.flatten(1)/1e3)[~torch.eye(len(encoder_out),dtype=torch.bool)].mean().item())
             if use_decoder:
                 cos_sim_decoder_output.append(utils.batchwise_cosine_similarity(output,output)[~torch.eye(len(output),dtype=torch.bool)].mean().item())
@@ -569,26 +609,40 @@ for epoch in progress_bar:
 
             if train_i >= (num_iterations_per_epoch-1):
                 break
+        
+        logs = {
+            "train/loss": np.mean(train_losses[-(train_i + 1) :]),
+            "train/recon_losses": np.mean(recon_losses[-(train_i + 1) :]),
+            "train/contrastive_losses": np.mean(contrastive_losses[-(train_i + 1) :]),
+            "train/num_steps": len(recon_losses),
+            "train/cos_sim_encoder_output": np.mean(cos_sim_encoder_output[-(train_i + 1) :]),
+            "train/cos_sim_decoder_output": np.mean(cos_sim_decoder_output[-(train_i + 1) :]) if use_decoder else np.nan,
+            "train/cos_sim_encoder_output_patchwise": np.mean(cos_sim_encoder_output_patchwise[-(train_i + 1) :]),
+            "lr": np.mean(lrs[-(train_i + 1) :]),
+            "epoch": epoch,
+            "tube_mask_ratio": tube_mask_ratio,
+            "decoder_mask_ratio": decoder_mask_ratio,
+        }
 
-        # reset linear_probe
-        # if use_cls_token:
-        #     linear_probe = LinearProbe((num_patches_per_timepoint+1)*model.encoder_embed_dim)
-        # else:
-        #     linear_probe = LinearProbe(num_patches_per_timepoint*model.encoder_embed_dim)
-        linear_probe = LinearProbe(model.encoder_embed_dim)
-        linear_probe = linear_probe.to(device)
-        probe_opt_grouped_parameters = [
-            {'params': [p for n, p in linear_probe.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': 1e-2},
-            {'params': [p for n, p in linear_probe.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0},
-        ]
-        probe_optimizer = torch.optim.AdamW(probe_opt_grouped_parameters, lr=1e-3)
-        probe_scheduler = torch.optim.lr_scheduler.OneCycleLR(
-            probe_optimizer,
-            max_lr=1e-3,  #3e-5
-            total_steps=probe_num_iterations_per_epoch*8
-        )
+        if epoch % probe_freq == probe_freq-1 or epoch == num_epochs-1:
+            # reset linear_probe
+            # if use_cls_token:
+            #     linear_probe = LinearProbe((num_patches_per_timepoint+1)*model.encoder_embed_dim)
+            # else:
+            #     linear_probe = LinearProbe(num_patches_per_timepoint*model.encoder_embed_dim)
+            linear_probe = LinearProbe(model.encoder_embed_dim)
+            linear_probe = linear_probe.to(device)
+            probe_opt_grouped_parameters = [
+                {'params': [p for n, p in linear_probe.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': 1e-2},
+                {'params': [p for n, p in linear_probe.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0},
+            ]
+            probe_optimizer = torch.optim.AdamW(probe_opt_grouped_parameters, lr=1e-3)
+            probe_scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                probe_optimizer,
+                max_lr=1e-3,  #3e-5
+                total_steps=probe_num_iterations_per_epoch*8
+            )
 
-        if True:#(epoch % 5 == 0) or (epoch == num_epochs-1):
             model.eval()
             # optimizer.eval()
             linear_probe.train()
@@ -667,35 +721,30 @@ for epoch in progress_bar:
                 test_accs.append(test_accuracy.item())
                 test_losses.append(test_loss.item())
 
+                cos_sim_encoder_output_patchwise_test.append(utils.patchwise_cosine_similarity(encoder_out)[~torch.eye(encoder_out.shape[1], dtype=bool)[None].expand(encoder_out.shape[0],-1,-1)].mean().item())
+                cos_sim_encoder_output_test.append(utils.batchwise_cosine_similarity(encoder_out.flatten(1)/1e3,encoder_out.flatten(1)/1e3)[~torch.eye(len(encoder_out),dtype=torch.bool)].mean().item())
+
                 print("test", test_i, test_accuracy.item(), test_loss.item())
 
                 if test_i >= 1:
                     break
 
-        logs = {
-            "train/loss": np.mean(train_losses[-(train_i + 1) :]),
-            "train/recon_losses": np.mean(recon_losses[-(train_i + 1) :]),
-            "train/contrastive_losses": np.mean(contrastive_losses[-(train_i + 1) :]),
-            "train/num_steps": len(recon_losses),
-            "train/cos_sim_encoder_output": np.mean(cos_sim_encoder_output[-(train_i + 1) :]),
-            "train/cos_sim_decoder_output": np.mean(cos_sim_decoder_output[-(train_i + 1) :]) if use_decoder else np.nan,
-            "train/cos_sim_encoder_output_patchwise": np.mean(cos_sim_encoder_output_patchwise[-(train_i + 1) :]),
-            "train/probe_losses": np.mean(probe_losses[-(probe_i + 1) :]),
-            "train/probe_accs": np.mean(probe_accs[-(probe_i + 1) :]),
-            "test/probe_losses": np.mean(test_losses[-(test_i + 1) :]),
-            "test/probe_accs": np.mean(test_accs[-(test_i + 1) :]),
-            "lr": np.mean(lrs[-(train_i + 1) :]),
-            "epoch": epoch,
-            "tube_mask_ratio": tube_mask_ratio,
-            "decoder_mask_ratio": decoder_mask_ratio,
-        }
+            logs.update({
+                "train/probe_losses": np.mean(probe_losses[-(probe_i + 1) :]),
+                "train/probe_accs": np.mean(probe_accs[-(probe_i + 1) :]),
+                "test/probe_losses": np.mean(test_losses[-(test_i + 1) :]),
+                "test/probe_accs": np.mean(test_accs[-(test_i + 1) :]),
+                "test/cos_sim_encoder_output": np.mean(cos_sim_encoder_output_test[-(test_i + 1) :]),
+                "test/cos_sim_encoder_output_patchwise": np.mean(cos_sim_encoder_output_patchwise_test[-(test_i + 1) :]),
+            })
+        
         progress_bar.set_postfix(**logs)
         if utils.is_interactive(): print(logs)
 
         # Plot progress (first sample in batch)
         with torch.no_grad():
             if use_decoder and (utils.is_interactive() or wandb_log):
-                if epoch % 50 == 0:
+                if epoch % viz_freq == viz_freq-1 or epoch == num_epochs-1:
                     output = (output * target_std) + target_mean
                     idx = 0
                     
@@ -748,7 +797,7 @@ for epoch in progress_bar:
     if wandb_log: wandb.log(logs)
 
     # Save model checkpoint
-    if (ckpt_saving) and ((epoch % ckpt_interval == 0) or (epoch==num_epochs-1)):
+    if (ckpt_saving) and ((epoch % ckpt_interval == ckpt_interval-1) or (epoch==num_epochs-1)):
         save_ckpt(model,"last")
 
     # wait for other GPUs to catch up if needed

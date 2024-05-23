@@ -1,24 +1,29 @@
 # Model Config
-model_name: "base_nomae_16patch_linprobe"
+model_name: "base_mae_8patch_depth2dec_linprobe_2"
 use_cls_token: True
 use_contrastive_loss: True
-use_decoder: False  # only use contrastive
+use_decoder: True  # only use contrastive if False
+use_vic_loss: True
 contrastive_loss_weight: 1.0
 
 # Training Configs
-batch_size: 32  # 8
+batch_size: 32 # 32  # 8
 num_workers: 10
 num_epochs: 100
 seed: 42
 max_lr: 3.0e-4 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 4096
-test_num_samples_per_epoch: 800
+test_num_samples_per_epoch: 800 # 960  # 800
 
 # Saving progress
 ckpt_saving: True
-ckpt_interval: 50
-resume_from_ckpt: True
+ckpt_interval: 1
+resume_from_ckpt: False
 wandb_log: True
+
+# Log Configs
+viz_freq: 10
+probe_freq: 5
 
 # MAE Config
 tube_start_masking_ratio: 0.75
@@ -26,17 +31,20 @@ tube_end_masking_ratio: 0.75
 decoder_mask_ratio: 0.75
 
 # Model Config
-patch_size: [16,16,16]  # [8,8,8]
+patch_size: [8,8,8]  # [16,16,16]  # [8,8,8]
 frame_patch_size: 4
 use_rope_emb: False
 masking_strategy: "None" #"MNI" #"conservative" #"None"
+# if True decoder config only determines depth, emb dims are copied from encoder
+use_decoder_same_emb_dim: True
+decoder_depth: 2
 
 # ViT Config
 encoder_model: "vit_base"
-decoder_model: "none"  # "vit_mini"
+decoder_model: "none"  # "vit_mini" 
 
 # Data Config
-img_size: [80, 96, 64]  # [88, 104, 72] # Image Size #104
+img_size: [88, 104, 72] # [80, 96, 64]  # [88, 104, 72] # Image Size #104
 num_frames: 4
 is_s3: False
 # train_urls: ["/weka/proj-fmri/shared/NSD_MNI_wds/000000.tar"]

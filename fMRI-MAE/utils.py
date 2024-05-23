@@ -13,6 +13,7 @@ from nilearn import plotting
 import matplotlib.pyplot as plt
 import re
 import torch.nn.functional as F
+import torch.nn as nn
 
 def my_split_by_node(urls): return urls
 
@@ -307,3 +308,71 @@ def get_first_tar(train_urls):
         return f"/scratch/fmri_foundation_datasets/NSD_MNI_wds/{first_tar}.tar"
     else:
         return None
+
+
+class VICRegHandler(nn.Module):
+    def __init__(self, in_dim, num_layers=3, act=F.gelu, h=2048, out_dim=8192):
+        super().__init__()
+        self.projector = nn.Sequential(
+            nn.Linear(in_dim, h),
+            act(),
+            nn.Linear(h, h),
+            act(),
+            nn.Linear(h, out_dim),
+        )
+
+    def forward(self, x):
+        return self.projector(x)
+
+    @classmethod
+    def vicreg_loss(l1, l2, gamma=1.0, lamda=25, mu=25, nu=1, eps=1e-4):
+        std_l1 = torch.sqrt(l1.flatten(1).var(dim=0)+eps)  # nxd
+        std_l2 = torch.sqrt(l2.flatten(1).var(dim=0)+eps)  # nxd
+        var_loss = F.relu(gamma - std_l1).mean() + F.relu(gamma - std_l2).mean()
+
+        sim_loss = F.mse_loss(l1, l2)
+
+        l1 = l1 - l1.mean(0, keepdim=True)  # b,n,d
+        l2 = l2 - l2.mean(0, keepdim=True)
+        cov_l1 = torch.bmm(l1.permute(1,2,0), l1.permute(1,0,2))/(l1.shape[0]-1)  # n,d,d
+        cov_l2 = torch.bmm(l2.permute(1,2,0), l2.permute(1,0,2))/(l2.shape[0]-1)
+        off_diag = ~torch.eye(cov_l1.shape[1], dtype=bool)[None].to(l1.device).expand_as(cov_l1)
+
+        cov_loss = ((cov_l1[off_diag]**2).sum() + (cov_l2[off_diag]**2).sum())/(l1.shape[1]*l1.shape[2])  # div by nxd
+
+        vic_loss = lamda * sim_loss + mu * var_loss + nu * cov_loss
+
+        return vic_loss
+
+
+class SimCLRHandler(nn.Module):
+    def __init__(self, in_dim, num_layers=2, act=F.gelu, out_dim=1024):
+        super().__init__()
+        self.projector = nn.Sequential(
+            nn.Linear(in_dim, in_dim),
+            act(),
+            nn.Linear(in_dim, max(in_dim,out_dim)),
+        )
+
+    def forward(self, x):
+        return self.projector(x)
+
+    @classmethod
+    def simclr_loss(lats, temp=0.006):
+        logits = (nn.functional.normalize(lats.flatten(1),dim=-1) @
+                    nn.functional.normalize(lats.flatten(1),dim=-1).T) / temp
+
+        labels = torch.diag_embed(
+            torch.ones(logits.shape[0] // 2), offset=logits.shape[0] // 2
+        ) + torch.diag_embed(torch.ones(logits.shape[0] // 2), offset=-logits.shape[0] // 2)
+        labels = labels.to(lats.device)
+        
+        mask = torch.ones_like(logits).bool()
+        torch.diagonal(mask).fill_(False)
+        
+        labels = labels[mask].reshape(logits.shape[0], logits.shape[0]-1)
+        logits = logits[mask].reshape(*labels.shape)
+
+        contr_loss = -(logits.log_softmax(-1) * labels).sum(-1).mean()
+
+        return contr_loss

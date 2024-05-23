@@ -20,6 +20,8 @@ from util import video_vit
 from util.logging import master_print as print
 from util.hcp_flat import load_hcp_flat_mask
 
+import copy
+
 
 class MaskedAutoencoderViT(nn.Module):
     """Masked Autoencoder with VisionTransformer backbone"""
@@ -231,7 +233,7 @@ class MaskedAutoencoderViT(nn.Module):
             self.register_buffer("patch_mask_indices", None)
             self.n_mask_patches = None
 
-    def patchify(self, imgs):
+    def patchify(self, imgs, alter_patch_info=True, return_patch_info=False):
         """
         imgs: (N, C, T, H, W)
         x: (N, L, patch_size**2 *C)
@@ -247,15 +249,22 @@ class MaskedAutoencoderViT(nn.Module):
         x = imgs.reshape(shape=(N, C, t, u, h, ph, w, pw))
         x = torch.einsum("nctuhpwq->nthwupqc", x)
         x = x.reshape(shape=(N, t * h * w, u * ph * pw * C))
-        self.patch_info = (N, C, T, H, W, ph, pw, u, t, h, w)
-        return x
+        if alter_patch_info:
+            self.patch_info = (N, C, T, H, W, ph, pw, u, t, h, w)
+        if return_patch_info:
+            return x, (N, C, T, H, W, ph, pw, u, t, h, w)
+        else:
+            return x
 
-    def unpatchify(self, x):
+    def unpatchify(self, x, patch_info=None):
         """
         x: (N, L, patch_size**2 *C)
         imgs: (N, C, H, W)
         """
-        N, C, T, H, W, ph, pw, u, t, h, w = self.patch_info
+        if patch_info is None:
+            N, C, T, H, W, ph, pw, u, t, h, w = self.patch_info
+        else:
+            N, C, T, H, W, ph, pw, u, t, h, w = patch_info
 
         x = x.reshape(shape=(N, t, h, w, u, ph, pw, C))
 
@@ -263,7 +272,7 @@ class MaskedAutoencoderViT(nn.Module):
         imgs = x.reshape(shape=(N, C, T, H, W))
         return imgs
 
-    def random_masking(self, x, mask_ratio):
+    def random_masking(self, x, mask_ratio, use_contrastive_loss=False):
         """
         Perform per-sample random masking by per-sample shuffling.
         Per-sample shuffling is done by argsort random noise.
@@ -296,17 +305,34 @@ class MaskedAutoencoderViT(nn.Module):
 
         # keep the first subset
         ids_keep = ids_shuffle[:, :len_keep]
-        x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).repeat(1, 1, D))
+        if not use_contrastive_loss:
+            x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).repeat(1, 1, D))
+        else:
+            x_masked1 = torch.gather(x, dim=1, index=ids_keep[:,:len_keep//2].unsqueeze(-1).repeat(1, 1, D))
+            x_masked2 = torch.gather(x, dim=1, index=ids_keep[:,len_keep//2:len_keep].unsqueeze(-1).repeat(1, 1, D))
 
-        # generate the binary mask: 0 is keep, 1 is remove
-        mask = torch.ones([N, L], device=x.device)
-        mask[:, :len_keep] = 0
-        # unshuffle to get the binary mask
-        mask = torch.gather(mask, dim=1, index=ids_restore)
+        if not use_contrastive_loss:
+            # generate the binary mask: 0 is keep, 1 is remove
+            mask = torch.ones([N, L], device=x.device)
+            mask[:, :len_keep] = 0
+            # unshuffle to get the binary mask
+            mask = torch.gather(mask, dim=1, index=ids_restore)
+        else:
+            # generate the binary mask: 0 is keep, 1 is remove
+            mask1 = torch.ones([N, L], device=x.device)
+            mask2 = torch.ones([N, L], device=x.device)
+            mask1[:, :len_keep//2] = 0
+            mask2[:, len_keep//2:len_keep] = 0
+            # unshuffle to get the binary mask
+            mask1 = torch.gather(mask1, dim=1, index=ids_restore)
+            mask2 = torch.gather(mask2, dim=1, index=ids_restore)
 
-        return x_masked, mask, ids_restore, ids_keep
+        if not use_contrastive_loss:
+            return x_masked, mask, ids_restore, ids_keep
+        else:
+            return [x_masked1,x_masked2], [mask1,mask2], ids_restore, ids_keep
 
-    def forward_encoder(self, x, mask_ratio):
+    def forward_encoder(self, x, mask_ratio, use_contrastive_loss=False):
         # embed patches
         x = self.patch_embed(x)
         N, T, L, C = x.shape
@@ -314,13 +340,22 @@ class MaskedAutoencoderViT(nn.Module):
         x = x.reshape(N, T * L, C)
 
         # masking: length -> length * mask_ratio
-        x, mask, ids_restore, ids_keep = self.random_masking(x, mask_ratio)
-        x = x.view(N, -1, C)
+        if not use_contrastive_loss:
+            x, mask, ids_restore, ids_keep = self.random_masking(x, mask_ratio)
+            x = x.view(N, -1, C)
+        else:
+            [x1,x2], [mask1,mask2], ids_restore, ids_keep = self.random_masking(x, mask_ratio, use_contrastive_loss=use_contrastive_loss)
+            x1 = x1.view(len(x1), -1, C)
+            x2 = x2.view(len(x2), -1, C)
         # append cls token
         if self.cls_embed:
             cls_token = self.cls_token
             cls_tokens = cls_token.expand(x.shape[0], -1, -1)
-            x = torch.cat((cls_tokens, x), dim=1)
+            if not use_contrastive_loss:
+                x = torch.cat((cls_tokens, x), dim=1)
+            else:
+                x1 = torch.cat((cls_tokens, x1), dim=1)
+                x2 = torch.cat((cls_tokens, x2), dim=1)
 
         # add pos embed w/o cls token
         if self.sep_pos_embed:
@@ -364,22 +399,40 @@ class MaskedAutoencoderViT(nn.Module):
                     ],
                     1,
                 )
-        x = x.view([N, -1, C]) + pos_embed
-
-        # apply Transformer blocks
-        for blk in self.blocks:
-            x = blk(x)
-        x = self.norm(x)
-
-        if self.cls_embed:
-            # remove cls token
-            x = x[:, 1:, :]
+        if not use_contrastive_loss:
+            x = x.view([N, -1, C]) + pos_embed
         else:
-            x = x[:, :, :]
+            x1 = x1.view([len(x1), -1, C]) + pos_embed[:,:x1.shape[1]]
+            x2 = x2.view([len(x2), -1, C]) + torch.cat((pos_embed[:,:1], pos_embed[:,x1.shape[1]:]),dim=1)
 
-        return x, mask, ids_restore
+        if not use_contrastive_loss:
+            # apply Transformer blocks
+            for blk in self.blocks:
+                x = blk(x)
+            x = self.norm(x)
+        else:
+            # apply Transformer blocks
+            for blk in self.blocks:
+                x1 = blk(x1)
+                x2 = blk(x2)
+            x1 = self.norm(x1)
+            x2 = self.norm(x2)
 
-    def forward_decoder(self, x, ids_restore):
+        if not use_contrastive_loss:
+            if self.cls_embed:
+                # remove cls token
+                x = x[:, 1:, :]
+
+            return x, mask, ids_restore
+        else:
+            if self.cls_embed:
+                # remove cls token
+                x1 = x1[:, 1:, :]
+                x2 = x2[:, 1:, :]
+
+            return [x1,x2], [mask1,mask2], ids_restore
+
+    def forward_decoder(self, x, ids_restore, use_contrastive_loss=False):
         N = x.shape[0]
         T = self.patch_embed.t_grid_size
         H, W = self.patch_embed.grid_size
@@ -494,12 +547,38 @@ class MaskedAutoencoderViT(nn.Module):
 
         loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
         return loss
+    
+    def forward_cyclic_loss(self, pred1, pred2, mask):
+        """
+        mask1 and mask2 encoder outputs should be the same since they are predicting the same held-out true mask
+        """
+        loss = (pred1 - pred2) ** 2
+        if self.img_mask is not None:
+            # exclude missing pixels from loss
+            mask = mask.unsqueeze(-1) * self.img_mask_patches
+        else:
+            loss = loss.mean(dim=-1)  # [N, L], mean loss per patch
 
-    def forward(self, imgs, mask_ratio=0.75):
-        latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio)
-        pred = self.forward_decoder(latent, ids_restore)  # [N, L, p*p*C]
-        loss = self.forward_loss(imgs, pred, mask)
-        return loss, pred, mask, latent
+        loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
+        return loss
+
+    def forward(self, imgs, mask_ratio=0.75, use_contrastive_loss=False):
+        latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio, use_contrastive_loss=use_contrastive_loss)
+        if not use_contrastive_loss:
+            pred = self.forward_decoder(latent, ids_restore, use_contrastive_loss=use_contrastive_loss)  # [N, L, p*p*C]
+            loss = self.forward_loss(imgs, pred, mask)
+            return loss, pred, mask, latent
+        else:
+            latent1, latent2 = latent
+            mask1, mask2 = mask
+            true_mask = copy.deepcopy(mask1)
+            true_mask[mask2==0]=0 # dont try to predict the masks that were fed to the other encoder
+            pred1 = self.forward_decoder(latent1, ids_restore, use_contrastive_loss=use_contrastive_loss)  # [N, L, p*p*C]
+            pred2 = self.forward_decoder(latent2, ids_restore, use_contrastive_loss=use_contrastive_loss)  # [N, L, p*p*C]
+            loss1 = self.forward_loss(imgs, pred1, true_mask)
+            loss2 = self.forward_loss(imgs, pred2, true_mask)
+            loss3 = self.forward_cyclic_loss(pred1, pred2, true_mask)
+            return loss1, loss2, loss3, pred1, pred2, mask1, mask2, true_mask, latent1, latent2
 
 
 def mae_vit_base_patch16(**kwargs):

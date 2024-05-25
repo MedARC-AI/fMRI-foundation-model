@@ -1,8 +1,11 @@
+import gzip
+import json
 import os
 import random
+from fnmatch import fnmatch
 from functools import partial
 from pathlib import Path
-from typing import Any, Dict, Iterable, Literal, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -13,11 +16,43 @@ HCP_FLAT_ROOT = "https://huggingface.co/datasets/bold-ai/HCP-Flat/resolve/main"
 NUM_SHARDS = {"train": 1629, "test": 174}
 FRAME_SIZE_BYTES = 29859
 
+# Tasks and conditions used in prior works (Zhang, 2021; Rastegarnia, 2023)
+INCLUDE_TASKS = {
+    "EMOTION", "LANGUAGE", "MOTOR", "RELATIONAL", "SOCIAL", "WM"
+}
+INCLUDE_CONDS = {
+    "fear",
+    "neut",
+    "math",
+    "story",
+    "lf",
+    "lh",
+    "rf",
+    "rh",
+    "t",
+    "match",
+    "relation",
+    "mental",
+    "rnd",
+    "0bk_body",
+    "2bk_body",
+    "0bk_faces",
+    "2bk_faces",
+    "0bk_places",
+    "2bk_places",
+    "0bk_tools",
+    "2bk_tools",
+}
+
+HCP_TR = {"3T": 0.72, "7T": 1.0}
+DEFAULT_DELAY = 4 * 0.72
+
 
 def create_hcp_flat(
     root: Optional[str] = None,
     split: Literal["train", "test"] = "train",
     shards: Optional[Union[int, Iterable[int]]] = None,
+    clip_mode: Literal["seq", "event"] = "seq",
     frames: int = 16,
     shuffle: Optional[bool] = None,
     buffer_size_mb: int = 3840,
@@ -31,6 +66,7 @@ def create_hcp_flat(
         https://github.com/tmbdev-archive/webdataset-imagenet-2/blob/main/imagenet.py
         https://github.com/huggingface/pytorch-image-models/blob/main/timm/data/readers/reader_wds.py
     """
+    root = root or os.environ.get("HCP_FLAT_ROOT") or HCP_FLAT_ROOT
     urls = get_hcp_flat_urls(root, split, shards)
 
     if shuffle:
@@ -38,6 +74,14 @@ def create_hcp_flat(
         print(f"Shuffle buffer size: {buffer_size}")
     else:
         buffer_size = 0
+
+    if clip_mode == "seq":
+        clipping = seq_clips(frames)
+    elif clip_mode == "event":
+        all_events_path = Path(root) / "all_events.json.gz"
+        with gzip.open(all_events_path) as f:
+            all_events = json.load(f)
+        clipping = event_clips(all_events, frames)
 
     # In training, we resample shards with replacement independently in every worker and
     # yield batches up to the target number of samples. In test, we iterate over the
@@ -59,11 +103,11 @@ def create_hcp_flat(
             resampled=shuffle,
             shardshuffle=1000 if shuffle else False,
             nodesplitter=wds.split_by_node,
-            select_files=select_extensions(("bold.npy", "meta.json")),
+            select_files=partial(select_files, task_only=clip_mode=="event"),
         )
         .decode()
         .map(extract_sample)
-        .compose(to_clips(frames))
+        .compose(clipping)
         .shuffle(buffer_size)
         .map_tuple(partial(to_tensor, mask=load_hcp_flat_mask()))
     )
@@ -88,12 +132,12 @@ def get_hcp_flat_urls(
     return urls
 
 
-def select_extensions(extensions: Tuple[str, ...]):
-    extensions_set = set(extensions)
-    def select_files(fname: str):
-        suffix = ".".join(fname.split(".")[1:])
-        return suffix in extensions_set
-    return select_files
+def select_files(fname: str, *, task_only: bool = False):
+    suffix = ".".join(fname.split(".")[1:])
+    keep = suffix in {"bold.npy", "meta.json"}
+    if task_only:
+        keep = keep and fnmatch(fname, "*mod-tfMRI*mag-3T*")
+    return keep
 
 
 def extract_sample(sample: Dict[str, Any]):
@@ -120,7 +164,7 @@ def unmask(img: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return unmasked
 
 
-def to_clips(frames: int = 16):
+def seq_clips(frames: int = 16):
     def _filter(src: IterableDataset[Tuple[np.ndarray, Dict[str, Any]]]):
         for img, meta in src:
             offset = random.randint(0, frames)
@@ -130,6 +174,37 @@ def to_clips(frames: int = 16):
                 clip = img[start : start + frames].copy()
                 meta = {**meta, "start": start}
                 yield clip, meta
+    return _filter
+
+
+def event_clips(
+    all_events: Dict[str, List[Dict[str, Any]]],
+    frames: int = 16,
+    delay: float = DEFAULT_DELAY,
+):
+    def _filter(src: IterableDataset[Tuple[np.ndarray, Dict[str, Any]]]):
+        for img, meta in src:
+            tr = HCP_TR[meta["mag"]]
+            events = all_events[meta["key"]]
+            if not events or meta["task"] not in INCLUDE_TASKS:
+                continue
+
+            for event in events:
+                cond = event["trial_type"]
+                if cond not in INCLUDE_CONDS:
+                    continue
+
+                onset = event["onset"]
+                duration = event["duration"]
+                onset_idx = int((onset + delay) / tr)
+                # sometimes the end of the trial is cut off
+                offset_idx = min(int((onset + delay + duration) / tr), len(img))
+                count = (offset_idx - onset_idx) // frames
+                for ii in range(count):
+                    start = onset_idx + ii * frames
+                    clip = img[start : start + frames].copy()
+                    meta = {**meta, "start": start, "trial_type": cond}
+                    yield clip, meta
     return _filter
 
 

@@ -67,9 +67,15 @@ def get_args_parser():
     )
     parser.add_argument("--split", default="train", help="dataset split")
     parser.add_argument(
+        "--clip_mode",
+        default="seq",
+        choices=["seq", "event"],
+        help="clip mode",
+    )
+    parser.add_argument(
         "--num_samples",
         type=int,
-        default=100000,
+        default=None,
         help="number of samples to extract",
     )
     parser.add_argument(
@@ -112,6 +118,7 @@ def main(args):
     dataset = create_hcp_flat(
         root=args.path_to_data_dir,
         split=args.split,
+        clip_mode=args.clip_mode,
         frames=args.num_frames,
         shuffle=False,
     )
@@ -122,8 +129,13 @@ def main(args):
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
     )
-    num_batches = args.num_samples // args.batch_size
-    data_loader = data_loader.with_epoch(num_batches)
+
+    if args.num_samples:
+        num_batches = args.num_samples // args.batch_size
+        data_loader = data_loader.with_epoch(num_batches)
+    else:
+        # dummy number of batches if extracting the full dataset
+        num_batches = 99999999
 
     output_path = Path(args.output_path)
     if output_path.exists():
@@ -201,7 +213,8 @@ def extract_features(
         with torch.cuda.amp.autocast(enabled=not fp32):
             features = model.forward_features(samples)
 
-        torch.cuda.synchronize()
+        if device.type == "cuda":
+            torch.cuda.synchronize()
 
         metric_logger.update(cpu_mem=misc.cpu_mem_usage()[0])
         metric_logger.update(cpu_mem_all=misc.cpu_mem_usage()[1])

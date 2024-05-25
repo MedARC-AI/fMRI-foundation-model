@@ -16,7 +16,7 @@ import webdataset as wds
 from elbow.sinks import BufferedParquetWriter
 from util.connectivity import Connectome
 from util.hcp_flat import create_hcp_flat
-from util.logging import master_print as print
+from util.misc import setup_for_distributed
 
 
 def get_args_parser():
@@ -95,6 +95,7 @@ def get_args_parser():
 
 
 def main(args):
+    setup_for_distributed(True)
     print("job dir: {}".format(os.path.dirname(os.path.realpath(__file__))))
     print("{}".format(args).replace(", ", ",\n"))
 

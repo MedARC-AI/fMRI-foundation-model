@@ -27,7 +27,6 @@ from iopath.common.file_io import g_pathmgr as pathmgr
 from torch.utils.data import default_collate
 from engine_pretrain import train_one_epoch
 from util.hcp_flat import create_hcp_flat
-from util.logging import master_print as print
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
 
 try:

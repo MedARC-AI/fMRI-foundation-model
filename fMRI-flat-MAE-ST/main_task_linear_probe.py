@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import pickle
 from pathlib import Path
 
 import pandas as pd
@@ -8,36 +9,13 @@ import numpy as np
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegressionCV
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
 
 from util.misc import setup_for_distributed
 
-TASK_ID_MAP = {
-    "EMOTION": 0,
-    "GAMBLING": 1,
-    "LANGUAGE": 2,
-    "MOTOR": 3,
-    "MOVIE1": 4,
-    "MOVIE2": 4,
-    "MOVIE3": 4,
-    "MOVIE4": 4,
-    "RELATIONAL": 5,
-    "REST1": 6,
-    "REST2": 6,
-    "REST3": 6,
-    "REST4": 6,
-    "RETBAR1": 7,
-    "RETBAR2": 7,
-    "RETCCW": 8,
-    "RETCON": 9,
-    "RETCW": 10,
-    "RETEXP": 11,
-    "SOCIAL": 12,
-    "WM": 13,
-}
-
 
 def get_args_parser():
-    parser = argparse.ArgumentParser("MAE fMRI task linear probe", add_help=False)
+    parser = argparse.ArgumentParser("MAE fMRI linear probe", add_help=False)
     parser.add_argument(
         "--feat_prefix",
         type=str,
@@ -45,9 +23,16 @@ def get_args_parser():
         help="feature parquet file prefix",
     )
     parser.add_argument(
-        "--output_path",
+        "--target",
+        type=str,
+        default="task",
+        choices=["task", "trial_type"],
+        help="prediction target",
+    )
+    parser.add_argument(
+        "--output_dir",
         default="",
-        help="path where to save json result",
+        help="path where to save, empty for no saving",
     )
     return parser
 
@@ -56,6 +41,12 @@ def main(args):
     setup_for_distributed(True)
     print("job dir: {}".format(os.path.dirname(os.path.realpath(__file__))))
     print("{}".format(args).replace(", ", ",\n"))
+
+    if args.output_dir:
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(exist_ok=True, parents=True)
+    else:
+        output_dir = None
 
     print("Loading features")
     train_features = pd.read_parquet(f"{args.feat_prefix}_train.parquet")
@@ -66,8 +57,18 @@ def main(args):
     X_test = np.stack(test_features["feature"])
     print(f"X_train: {X_train.shape}, X_test: {X_test.shape}")
 
-    y_train = train_features["task"].apply(lambda v: TASK_ID_MAP[v]).values
-    y_test = test_features["task"].apply(lambda v: TASK_ID_MAP[v]).values
+    if args.target == "task":
+        labels_train = train_features["task"].str.rstrip("1234").values
+        labels_test = test_features["task"].str.rstrip("1234").values
+    elif args.target == "trial_type":
+        labels_train = train_features["trial_type"].values
+        labels_test = test_features["trial_type"].values
+
+    label_enc = LabelEncoder()
+    y_train = label_enc.fit_transform(labels_train)
+    y_test = label_enc.transform(labels_test)
+
+    print(f"classes ({len(label_enc.classes_)}): {label_enc.classes_}")
     print(
         f"\ny_train: {y_train.shape} {y_train[:20]}\n"
         f"y_test: {y_test.shape} {y_test[:20]}"
@@ -102,15 +103,25 @@ def main(args):
 
     result = {
         "feat_prefix": args.feat_prefix,
+        "target": args.target,
         "train_acc": train_acc,
         "val_acc": val_acc,
         "test_acc": test_acc,
     }
 
-    if args.output_path:
-        Path(args.output_path).parent.mkdir(exist_ok=True, parents=True)
-        with open(args.output_path, "a") as f:
+    if output_dir:
+        print(f"Saving results to: {output_dir}")
+        with open(output_dir / "result.json", "w") as f:
             print(json.dumps(result), file=f)
+
+        state = {
+            "label_enc": label_enc,
+            "pca": pca,
+            "clf": clf,
+            "result": result,
+        }
+        with open(output_dir / "state.pkl", "wb") as f:
+            pickle.dump(state, f)
 
     print(f"Done:\n{json.dumps(result)}")
 

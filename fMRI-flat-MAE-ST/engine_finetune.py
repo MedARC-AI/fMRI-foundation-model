@@ -11,13 +11,13 @@
 
 import math
 import sys
-from typing import Iterable, Optional
+from typing import Iterable
 
-import mae_st.util.lr_sched as lr_sched
-import mae_st.util.misc as misc
+import util.lr_sched as lr_sched
+import util.misc as misc
 import torch
-from mae_st.util.logging import master_print as print
-from timm.data import Mixup
+import wandb
+from util.logging import master_print as print
 from timm.utils import accuracy
 
 
@@ -30,10 +30,10 @@ def train_one_epoch(
     epoch: int,
     loss_scaler,
     max_norm: float = 0,
-    mixup_fn: Optional[Mixup] = None,
-    log_writer=None,
     args=None,
     fp32=False,
+    num_batches=None,
+    log_wandb=False,
 ):
     model.train(True)
     metric_logger = misc.MetricLogger(delimiter="  ")
@@ -49,22 +49,24 @@ def train_one_epoch(
     )
     header = "Epoch: [{}]".format(epoch)
     print_freq = 20
+    log_wandb = misc.is_main_process() and log_wandb
 
     accum_iter = args.accum_iter
+    if num_batches is None:
+        num_batches = len(data_loader)
 
     optimizer.zero_grad()
 
-    if log_writer is not None:
-        print("log_dir: {}".format(log_writer.log_dir))
-
     for data_iter_step, (samples, targets) in enumerate(
-        metric_logger.log_every(data_loader, print_freq, header)
+        metric_logger.log_every(
+            data_loader, print_freq, header, total_steps=num_batches
+        )
     ):
 
         # we use a per iteration (instead of per epoch) lr scheduler
         if data_iter_step % accum_iter == 0:
             lr_sched.adjust_learning_rate(
-                optimizer, data_iter_step / len(data_loader) + epoch, args
+                optimizer, data_iter_step / num_batches + epoch, args
             )
 
         if len(samples.shape) == 6:
@@ -72,16 +74,8 @@ def train_one_epoch(
             samples = samples.view(b * r, c, t, h, w)
             targets = targets.view(b * r)
 
-        if args.cpu_mix:
-            if mixup_fn is not None:
-                samples, targets = mixup_fn(samples, targets)
-            samples = samples.to(device, non_blocking=True)
-            targets = targets.to(device, non_blocking=True)
-        else:
-            samples = samples.to(device, non_blocking=True)
-            targets = targets.to(device, non_blocking=True)
-            if mixup_fn is not None:
-                samples, targets = mixup_fn(samples, targets)
+        samples = samples.to(device, non_blocking=True)
+        targets = targets.to(device, non_blocking=True)
 
         with torch.cuda.amp.autocast(enabled=not fp32):
             outputs = model(samples)
@@ -105,7 +99,8 @@ def train_one_epoch(
         if (data_iter_step + 1) % accum_iter == 0:
             optimizer.zero_grad()
 
-        torch.cuda.synchronize()
+        if device.type == "cuda":
+            torch.cuda.synchronize()
 
         metric_logger.update(loss=loss_value)
         metric_logger.update(cpu_mem=misc.cpu_mem_usage()[0])
@@ -120,15 +115,12 @@ def train_one_epoch(
         metric_logger.update(lr=max_lr)
 
         loss_value_reduce = misc.all_reduce_mean(loss_value)
-        if log_writer is not None and (data_iter_step + 1) % accum_iter == 0:
+        if log_wandb and (data_iter_step + 1) % accum_iter == 0:
             """We use epoch_1000x as the x-axis in tensorboard.
             This calibrates different curves when batch size changes.
             """
-            epoch_1000x = int(
-                (data_iter_step / len(data_loader) + epoch) * 1000 * args.repeat_aug
-            )
-            log_writer.add_scalar("loss", loss_value_reduce, epoch_1000x)
-            log_writer.add_scalar("lr", max_lr, epoch_1000x)
+            epoch_1000x = int((data_iter_step / num_batches + epoch) * 1000)
+            wandb.log({"train_loss": loss_value_reduce, "lr": max_lr}, step=epoch_1000x)
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
@@ -137,18 +129,30 @@ def train_one_epoch(
 
 
 @torch.no_grad()
-def evaluate(data_loader, model, device):
-    criterion = torch.nn.CrossEntropyLoss()
-
+def evaluate(
+    model: torch.nn.Module,
+    criterion: torch.nn.Module,
+    data_loader: Iterable,
+    device: torch.device,
+    epoch: int,
+    args=None,
+    fp32=False,
+    num_batches=None,
+    log_wandb=False,
+):
     metric_logger = misc.MetricLogger(delimiter="  ")
-    header = "Test:"
+    header = "Test: [{}]".format(epoch)
+    log_wandb = misc.is_main_process() and log_wandb
 
     # switch to evaluation mode
     model.eval()
 
-    for batch in metric_logger.log_every(data_loader, 10, header):
-        images = batch[0]
-        target = batch[-1]
+    if num_batches is None:
+        num_batches = len(data_loader)
+
+    for images, target in metric_logger.log_every(
+        data_loader, 10, header, total_steps=num_batches
+    ):
         images = images.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
 
@@ -158,22 +162,32 @@ def evaluate(data_loader, model, device):
             target = target.view(b * r)
 
         # compute output
-        with torch.cuda.amp.autocast():
+        with torch.cuda.amp.autocast(enabled=not fp32):
             output = model(images)
             loss = criterion(output, target)
 
-        acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        acc = accuracy(output, target)
 
         batch_size = images.shape[0]
         metric_logger.update(loss=loss.item())
-        metric_logger.meters["acc1"].update(acc1.item(), n=batch_size)
-        metric_logger.meters["acc5"].update(acc5.item(), n=batch_size)
+        metric_logger.meters["acc"].update(acc.item(), n=batch_size)
+
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print(
-        "* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}".format(
-            top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss
+        "* Acc {acc.global_avg:.3f} loss {loss.global_avg:.3f}".format(
+            acc=metric_logger.acc, loss=metric_logger.loss
         )
     )
+
+    if log_wandb:
+        epoch_1000x = epoch * 1000
+        wandb.log(
+            {
+                "test_acc": metric_logger.acc.global_avg,
+                "test_loss": metric_logger.loss.global_avg,
+            },
+            step=epoch_1000x,
+        )
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}

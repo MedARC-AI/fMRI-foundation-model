@@ -5,7 +5,7 @@ import random
 from fnmatch import fnmatch
 from functools import partial
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Tuple, Union
 
 import numpy as np
 import torch
@@ -16,34 +16,6 @@ HCP_FLAT_ROOT = "https://huggingface.co/datasets/bold-ai/HCP-Flat/resolve/main"
 NUM_SHARDS = {"train": 1629, "test": 174}
 FRAME_SIZE_BYTES = 29859
 
-# Tasks and conditions used in prior works (Zhang, 2021; Rastegarnia, 2023)
-INCLUDE_TASKS = {
-    "EMOTION", "LANGUAGE", "MOTOR", "RELATIONAL", "SOCIAL", "WM"
-}
-INCLUDE_CONDS = {
-    "fear",
-    "neut",
-    "math",
-    "story",
-    "lf",
-    "lh",
-    "rf",
-    "rh",
-    "t",
-    "match",
-    "relation",
-    "mental",
-    "rnd",
-    "0bk_body",
-    "2bk_body",
-    "0bk_faces",
-    "2bk_faces",
-    "0bk_places",
-    "2bk_places",
-    "0bk_tools",
-    "2bk_tools",
-}
-
 HCP_TR = {"3T": 0.72, "7T": 1.0}
 DEFAULT_DELAY = 4 * 0.72
 
@@ -53,6 +25,7 @@ def create_hcp_flat(
     split: Literal["train", "test"] = "train",
     shards: Optional[Union[int, Iterable[int]]] = None,
     clip_mode: Literal["seq", "event"] = "seq",
+    target: Optional[Literal["task", "trial_type"]] = None,
     frames: int = 16,
     shuffle: Optional[bool] = None,
     buffer_size_mb: int = 3840,
@@ -81,7 +54,11 @@ def create_hcp_flat(
         all_events_path = Path(root) / "all_events.json.gz"
         with gzip.open(all_events_path) as f:
             all_events = json.load(f)
-        clipping = event_clips(all_events, frames)
+
+        class_map_path = Path(root) / "trial_type_class_map.json"
+        with class_map_path.open() as f:
+            class_map = json.load(f)
+        clipping = event_clips(all_events, set(class_map), frames=frames)
 
     # In training, we resample shards with replacement independently in every worker and
     # yield batches up to the target number of samples. In test, we iterate over the
@@ -111,6 +88,14 @@ def create_hcp_flat(
         .shuffle(buffer_size)
         .map_tuple(partial(to_tensor, mask=load_hcp_flat_mask()))
     )
+
+    # replace metadata dict with int targets
+    if target is not None:
+        class_map_path = Path(root) / f"{target}_class_map.json"
+        with class_map_path.open() as f:
+            class_map = json.load(f)
+        dataset = dataset.compose(with_targets(target, class_map))
+
     return dataset
 
 
@@ -179,6 +164,7 @@ def seq_clips(frames: int = 16):
 
 def event_clips(
     all_events: Dict[str, List[Dict[str, Any]]],
+    include_trial_types: Set[str],
     frames: int = 16,
     delay: float = DEFAULT_DELAY,
 ):
@@ -186,12 +172,9 @@ def event_clips(
         for img, meta in src:
             tr = HCP_TR[meta["mag"]]
             events = all_events[meta["key"]]
-            if not events or meta["task"] not in INCLUDE_TASKS:
-                continue
-
             for event in events:
                 cond = event["trial_type"]
-                if cond not in INCLUDE_CONDS:
+                if cond not in include_trial_types:
                     continue
 
                 onset = event["onset"]
@@ -205,6 +188,14 @@ def event_clips(
                     clip = img[start : start + frames].copy()
                     meta = {**meta, "start": start, "trial_type": cond}
                     yield clip, meta
+    return _filter
+
+
+def with_targets(key: str, class_id_map: Dict[str, int]):
+    def _filter(src: IterableDataset[Tuple[np.ndarray, Dict[str, Any]]]):
+        for img, meta in src:
+            target = class_id_map[meta[key]]
+            yield img, target
     return _filter
 
 

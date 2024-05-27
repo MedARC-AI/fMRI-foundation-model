@@ -11,6 +11,7 @@
 
 import builtins
 import datetime
+import fnmatch
 import math
 import os
 import time
@@ -506,3 +507,17 @@ def convert_checkpoint(model_2d):
         else:
             state_dict_inflated[k] = v2d.clone()
     return state_dict_inflated
+
+
+def set_requires_grad(
+    model: torch.nn.Module,
+    patterns: list[str],
+    requires_grad: bool = False,
+):
+    updated = []
+    for name, p in model.named_parameters():
+        for pattern in patterns:
+            if fnmatch.fnmatch(name, pattern):
+                p.requires_grad_(requires_grad)
+                updated.append(name)
+    return updated

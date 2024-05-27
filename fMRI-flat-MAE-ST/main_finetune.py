@@ -11,39 +11,47 @@
 
 import argparse
 import datetime
-import gc
 import json
 import os
+import random
 import time
+from pathlib import Path
 
-import mae_st.models_vit as models_vit
+import models_vit
 
-import mae_st.util.env
-import mae_st.util.lr_decay as lrd
-import mae_st.util.misc as misc
+import util.lr_decay as lrd
+import util.misc as misc
 
 import numpy as np
-import timm
 import torch
 import torch.backends.cudnn as cudnn
+import webdataset as wds
 from iopath.common.file_io import g_pathmgr as pathmgr
-from mae_st.engine_finetune import evaluate, train_one_epoch
+from torch.utils.data import default_collate
+from engine_finetune import evaluate, train_one_epoch
+from util.hcp_flat import create_hcp_flat
 
-from mae_st.util.decoder.mixup import MixUp as MixVideo
-from mae_st.util.kinetics import Kinetics
-from mae_st.util.logging import master_print as print
-from mae_st.util.misc import NativeScalerWithGradNormCount as NativeScaler
-from mae_st.util.pos_embed import interpolate_pos_embed
+from util.logging import master_print as print
+from util.misc import NativeScalerWithGradNormCount as NativeScaler
+from util.misc import set_requires_grad
 
-# from pytorchvideo.transforms.mix import MixVideo
-from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
-from timm.models.layers import trunc_normal_
-from torch.utils.tensorboard import SummaryWriter
+from timm.loss import LabelSmoothingCrossEntropy
+from timm.layers import trunc_normal_
+
+try:
+    import wandb
+    has_wandb = True
+except ImportError:
+    has_wandb = False
+
+PROJECT = "fMRI-foundation-model"
+NUM_CLASSES = {"task": 14, "trial_type": 21}
+CLIP_MODES = {"task": "seq", "trial_type": "event"}
 
 
 def get_args_parser():
     parser = argparse.ArgumentParser(
-        "MAE fine-tuning for image classification", add_help=False
+        "MAE fMRI fine-tuning for task/state classification", add_help=False
     )
     parser.add_argument(
         "--batch_size",
@@ -62,13 +70,11 @@ def get_args_parser():
     # Model parameters
     parser.add_argument(
         "--model",
-        default="vit_large_patch16",
+        default="vit_base_patch16_fmri",
         type=str,
         metavar="MODEL",
         help="Name of model to train",
     )
-
-    parser.add_argument("--input_size", default=224, type=int, help="images input size")
 
     parser.add_argument(
         "--dropout",
@@ -129,102 +135,51 @@ def get_args_parser():
         "--warmup_epochs", type=int, default=5, metavar="N", help="epochs to warmup LR"
     )
 
-    # Augmentation parameters
-    parser.add_argument(
-        "--color_jitter",
-        type=float,
-        default=None,
-        metavar="PCT",
-        help="Color jitter factor (enabled only when not using Auto/RandAug)",
-    )
-    parser.add_argument(
-        "--aa",
-        type=str,
-        default="rand-m7-mstd0.5-inc1",
-        metavar="NAME",
-        help='Use AutoAugment policy. "v0" or "original". " + "(default: rand-m9-mstd0.5-inc1)',
-    ),
     parser.add_argument(
         "--smoothing", type=float, default=0.1, help="Label smoothing (default: 0.1)"
     )
 
-    # * Random Erase params
-    parser.add_argument(
-        "--reprob",
-        type=float,
-        default=0.25,
-        metavar="PCT",
-        help="Random erase prob (default: 0.25)",
-    )
-    parser.add_argument(
-        "--remode",
-        type=str,
-        default="pixel",
-        help='Random erase mode (default: "pixel")',
-    )
-    parser.add_argument(
-        "--recount", type=int, default=1, help="Random erase count (default: 1)"
-    )
-    parser.add_argument(
-        "--resplit",
-        action="store_true",
-        default=False,
-        help="Do not random erase first (clean) augmentation split",
-    )
-
-    # * Mixup params
-    parser.add_argument(
-        "--mixup", type=float, default=0, help="mixup alpha, mixup enabled if > 0."
-    )
-    parser.add_argument(
-        "--cutmix", type=float, default=0, help="cutmix alpha, cutmix enabled if > 0."
-    )
-    parser.add_argument(
-        "--cutmix_minmax",
-        type=float,
-        nargs="+",
-        default=None,
-        help="cutmix min/max ratio, overrides alpha and enables cutmix if set (default: None)",
-    )
-    parser.add_argument(
-        "--mixup_prob",
-        type=float,
-        default=1.0,
-        help="Probability of performing mixup or cutmix when either/both is enabled",
-    )
-    parser.add_argument(
-        "--mixup_switch_prob",
-        type=float,
-        default=0.5,
-        help="Probability of switching to cutmix when both mixup and cutmix enabled",
-    )
-    parser.add_argument(
-        "--mixup_mode",
-        type=str,
-        default="batch",
-        help='How to apply mixup/cutmix params. Per "batch", "pair", or "elem"',
-    )
-
     # * Finetuning params
     parser.add_argument("--finetune", default="", help="finetune from checkpoint")
-    parser.add_argument("--global_pool", action="store_true")
-    parser.set_defaults(global_pool=True)
     parser.add_argument(
-        "--cls_token",
-        action="store_false",
-        dest="global_pool",
-        help="Use class token instead of global pool for classification",
+        "--freeze_params",
+        default="",
+        help="comma-separated list of patterns for params to freeze"
     )
     parser.add_argument(
-        "--num_classes",
-        default=400,
-        type=int,
-        help="number of the classification types",
+        "--unfreeze_params",
+        default="",
+        help="comma-separated list of patterns for params to unfreeze"
+    )
+    parser.add_argument(
+        "--global_pool",
+        default="avg",
+        choices=["avg", "cls", "spatial"],
+        help="global pool mode"
+    )
+    parser.add_argument(
+        "--target",
+        default="trial_type",
+        choices=["task", "trial_type"],
+        help="classification target",
     )
     parser.add_argument(
         "--path_to_data_dir",
-        default="",
-        help="path where to save, empty for no saving",
+        type=str,
+        default=None,
+        help="local path for HCP-Flat data",
+    )
+    parser.add_argument(
+        "--num_train_samples",
+        type=int,
+        default=100000,
+        help="number of training samples per epoch",
+    )
+    parser.add_argument(
+        "--num_val_samples",
+        type=int,
+        default=5000,
+        help="number of training samples per epoch",
     )
     parser.add_argument(
         "--output_dir",
@@ -232,10 +187,9 @@ def get_args_parser():
         help="path where to save, empty for no saving",
     )
     parser.add_argument(
-        "--log_dir",
-        default="",
-        help="path where to tensorboard log",
+        "--name", type=str, default=None, help="name for current run",
     )
+    parser.add_argument("--wandb", action="store_true", help="enable wandb logging")
     parser.add_argument(
         "--device", default="cuda", help="device to use for training / testing"
     )
@@ -252,7 +206,7 @@ def get_args_parser():
         default=False,
         help="Enabling distributed evaluation (recommended during training for faster monitor",
     )
-    parser.add_argument("--num_workers", default=10, type=int)
+    parser.add_argument("--num_workers", default=5, type=int)
     parser.add_argument(
         "--pin_mem",
         action="store_true",
@@ -273,14 +227,10 @@ def get_args_parser():
 
     # Video related configs
     parser.add_argument("--no_env", action="store_true")
-    parser.add_argument("--rand_aug", default=False, action="store_true")
     parser.add_argument("--t_patch_size", default=2, type=int)
-    parser.add_argument("--num_frames", default=32, type=int)
+    parser.add_argument("--num_frames", default=16, type=int)
     parser.add_argument("--checkpoint_period", default=1, type=int)
-    parser.add_argument("--sampling_rate", default=2, type=int)
     parser.add_argument("--distributed", action="store_true")
-    parser.add_argument("--repeat_aug", default=1, type=int)
-    parser.add_argument("--cpu_mix", action="store_true")
     parser.add_argument("--no_qkv_bias", action="store_true")
     parser.add_argument("--sep_pos_embed", action="store_true")
     parser.set_defaults(sep_pos_embed=True)
@@ -289,18 +239,6 @@ def get_args_parser():
         action="store_true",
     )
     parser.set_defaults(fp32=True)
-    parser.add_argument(
-        "--jitter_scales_relative",
-        default=[0.08, 1.0],
-        type=float,
-        nargs="+",
-    )
-    parser.add_argument(
-        "--jitter_aspect_relative",
-        default=[0.75, 1.3333],
-        type=float,
-        nargs="+",
-    )
     parser.add_argument("--cls_embed", action="store_true")
     parser.set_defaults(cls_embed=True)
     return parser
@@ -309,6 +247,11 @@ def get_args_parser():
 def main(args):
     misc.init_distributed_mode(args)
 
+    global_rank = misc.get_rank()
+    if global_rank == 0 and args.wandb:
+        assert has_wandb, "wandb not installed"
+        wandb.init(project=PROJECT, name=args.name, config=vars(args))
+
     print("job dir: {}".format(os.path.dirname(os.path.realpath(__file__))))
     print("{}".format(args).replace(", ", ",\n"))
 
@@ -316,103 +259,64 @@ def main(args):
 
     # fix the seed for reproducibility
     seed = args.seed + misc.get_rank()
+    random.seed(seed)
     torch.manual_seed(seed)
     np.random.seed(seed)
 
     cudnn.benchmark = True
 
-    dataset_train = Kinetics(
-        mode="finetune",
-        path_to_data_dir=args.path_to_data_dir,
-        sampling_rate=args.sampling_rate,
-        num_frames=args.num_frames,
-        train_jitter_scales=(256, 320),
-        repeat_aug=args.repeat_aug,
-        pretrain_rand_erase_prob=args.reprob,
-        pretrain_rand_erase_mode=args.remode,
-        pretrain_rand_erase_count=args.recount,
-        pretrain_rand_erase_split=args.resplit,
-        aa_type=args.aa,
-        rand_aug=args.rand_aug,
-        jitter_aspect_relative=args.jitter_aspect_relative,
-        jitter_scales_relative=args.jitter_scales_relative,
+    dataset_train = create_hcp_flat(
+        root=args.path_to_data_dir,
+        split="train",
+        clip_mode=CLIP_MODES[args.target],
+        target=args.target,
+        frames=args.num_frames,
+        shuffle=True,
     )
-    dataset_val = Kinetics(
-        mode="val",
-        path_to_data_dir=args.path_to_data_dir,
-        sampling_rate=args.sampling_rate,
-        num_frames=args.num_frames,
-        train_jitter_scales=(256, 320),
-        jitter_aspect_relative=args.jitter_aspect_relative,
-        jitter_scales_relative=args.jitter_scales_relative,
-    )
-
-    if args.distributed:
-        num_tasks = misc.get_world_size()
-        global_rank = misc.get_rank()
-        sampler_train = torch.utils.data.DistributedSampler(
-            dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
-        )
-        print("Sampler_train = %s" % str(sampler_train))
-        if args.dist_eval:
-            if len(dataset_val) % num_tasks != 0:
-                print(
-                    "Warning: Enabling distributed evaluation with an eval dataset not divisible by process number. "
-                    "This will slightly alter validation results as extra duplicate entries are added to achieve "
-                    "equal num of samples per-process."
-                )
-            sampler_val = torch.utils.data.DistributedSampler(
-                dataset_val, num_replicas=num_tasks, rank=global_rank, shuffle=True
-            )  # shuffle=True to reduce monitor bias
-        else:
-            sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-    else:
-        num_tasks = 1
-        global_rank = 0
-        sampler_train = torch.utils.data.RandomSampler(dataset_train)
-        sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-
-    if global_rank == 0 and args.log_dir is not None and not args.eval:
-        try:
-            pathmgr.mkdirs(args.log_dir)
-        except Exception as _:
-            pass
-        log_writer = SummaryWriter(log_dir=args.log_dir)
-    else:
-        log_writer = None
-
-    data_loader_train = torch.utils.data.DataLoader(
-        dataset_train,
-        sampler=sampler_train,
-        batch_size=args.batch_size,
+    data_loader_train = wds.WebLoader(
+        dataset_train.batched(
+            args.batch_size, collation_fn=default_collate, partial=False
+        ),
+        batch_size=None,
+        shuffle=False,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
-        drop_last=True,
     )
+    num_train_batches = args.num_train_samples // (
+        misc.get_world_size() * args.batch_size
+    )
+    data_loader_train = data_loader_train.with_epoch(num_train_batches)
 
-    data_loader_val = torch.utils.data.DataLoader(
-        dataset_val,
-        sampler=sampler_val,
-        batch_size=args.batch_size,
+    dataset_val = create_hcp_flat(
+        root=args.path_to_data_dir,
+        split="test",
+        shards=range(87),  # first half of shards used as val
+        clip_mode=CLIP_MODES[args.target],
+        target=args.target,
+        frames=args.num_frames,
+        shuffle=False,
+    )
+    data_loader_val = wds.WebLoader(
+        dataset_val.batched(
+            args.batch_size, collation_fn=default_collate, partial=False
+        ),
+        batch_size=None,
+        shuffle=False,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
-        drop_last=False,
     )
+    num_val_batches = args.num_val_samples // (
+        misc.get_world_size() * args.batch_size
+    )
+    data_loader_val = data_loader_val.with_epoch(num_val_batches)
 
-    mixup_fn = None
-    mixup_active = args.mixup > 0 or args.cutmix > 0.0 or args.cutmix_minmax is not None
-    if mixup_active:
-        print("Mixup is activated!")
-        mixup_fn = MixVideo(
-            mixup_alpha=args.mixup,
-            cutmix_alpha=args.cutmix,
-            mix_prob=args.mixup_prob,
-            switch_prob=args.mixup_switch_prob,
-            label_smoothing=args.smoothing,
-            num_classes=args.num_classes,
-        )
+    if global_rank == 0 and args.output_dir:
+        if args.name:
+            args.output_dir = f"{args.output_dir}/{args.name}"
+        Path(args.output_dir).mkdir(parents=True)
 
     model = models_vit.__dict__[args.model](
+        num_classes=NUM_CLASSES[args.target],
         **vars(args),
     )
 
@@ -434,9 +338,6 @@ def main(args):
                 print(f"Removing key {k} from pretrained checkpoint")
                 del checkpoint_model[k]
 
-        # interpolate position embedding
-        interpolate_pos_embed(model, checkpoint_model)
-
         # load pre-trained model
         msg = model.load_state_dict(checkpoint_model, strict=False)
         print(msg)
@@ -444,16 +345,24 @@ def main(args):
         # manually initialize fc layer
         trunc_normal_(model.head.weight, std=2e-5)
 
+    if args.freeze_params:
+        set_requires_grad(model, args.freeze_params.split(","), False)
+
+    if args.unfreeze_params:
+        set_requires_grad(model, args.unfreeze_params.split(","), True)
+
     model.to(device)
 
     model_without_ddp = model
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    trainable_params = [name for name, p in model.named_parameters() if p.requires_grad]
 
     print("Model = %s" % str(model_without_ddp))
     print("number of params (M): %.2f" % (n_parameters / 1.0e6))
+    print(f"trainable params:\n{trainable_params}")
 
     eff_batch_size = (
-        args.batch_size * args.accum_iter * misc.get_world_size() * args.repeat_aug
+        args.batch_size * args.accum_iter * misc.get_world_size()
     )
 
     if args.lr is None:  # only base_lr is specified
@@ -471,6 +380,9 @@ def main(args):
         )
         model_without_ddp = model.module
 
+    if global_rank == 0 and args.wandb:
+        wandb.watch(model)
+
     # build optimizer with layer-wise lr decay (lrd)
     param_groups = lrd.param_groups_lrd(
         model_without_ddp,
@@ -481,10 +393,7 @@ def main(args):
     optimizer = torch.optim.AdamW(param_groups, lr=args.lr)
     loss_scaler = NativeScaler(fp32=args.fp32)
 
-    if mixup_fn is not None:
-        # smoothing is handled with mixup label transform
-        criterion = SoftTargetCrossEntropy()
-    elif args.smoothing > 0.0:
+    if args.smoothing > 0.0:
         criterion = LabelSmoothingCrossEntropy(smoothing=args.smoothing)
     else:
         criterion = torch.nn.CrossEntropyLoss()
@@ -499,9 +408,16 @@ def main(args):
     )
 
     if args.eval:
-        test_stats = evaluate(data_loader_val, model, device)
-        print(
-            f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%"
+        test_stats = evaluate(
+            model,
+            criterion,
+            data_loader_val,
+            device,
+            epoch=args.start_epoch,
+            args=args,
+            fp32=args.fp32,
+            num_batches=num_val_batches,
+            log_wandb=args.wandb,
         )
         exit(0)
 
@@ -510,8 +426,6 @@ def main(args):
     start_time = time.time()
     max_accuracy = 0.0
     for epoch in range(args.start_epoch, args.epochs):
-        if args.distributed:
-            data_loader_train.sampler.set_epoch(epoch)
         train_stats = train_one_epoch(
             model,
             criterion,
@@ -521,10 +435,10 @@ def main(args):
             epoch,
             loss_scaler,
             args.clip_grad,
-            mixup_fn,
-            log_writer=log_writer,
             args=args,
             fp32=args.fp32,
+            num_batches=num_train_batches,
+            log_wandb=args.wandb,
         )
         if args.output_dir:
             checkpoint_path = misc.save_model(
@@ -536,17 +450,19 @@ def main(args):
                 epoch=epoch,
             )
 
-        test_stats = evaluate(data_loader_val, model, device)
-        print(
-            f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%"
+        test_stats = evaluate(
+            model,
+            criterion,
+            data_loader_val,
+            device,
+            epoch=epoch,
+            args=args,
+            fp32=args.fp32,
+            num_batches=num_val_batches,
+            log_wandb=args.wandb,
         )
-        max_accuracy = max(max_accuracy, test_stats["acc1"])
+        max_accuracy = max(max_accuracy, test_stats["acc"])
         print(f"Max accuracy: {max_accuracy:.2f}%")
-
-        if log_writer is not None:
-            log_writer.add_scalar("perf/test_acc1", test_stats["acc1"], epoch)
-            log_writer.add_scalar("perf/test_acc5", test_stats["acc5"], epoch)
-            log_writer.add_scalar("perf/test_loss", test_stats["loss"], epoch)
 
         log_stats = {
             **{f"train_{k}": v for k, v in train_stats.items()},
@@ -556,8 +472,6 @@ def main(args):
         }
 
         if args.output_dir and misc.is_main_process():
-            if log_writer is not None:
-                log_writer.flush()
             with pathmgr.open(
                 f"{args.output_dir}/log.txt",
                 "a",
@@ -570,27 +484,7 @@ def main(args):
     return [checkpoint_path]
 
 
-def launch_one_thread(
-    local_rank,
-    shard_rank,
-    num_gpus_per_node,
-    num_shards,
-    init_method,
-    output_path,
-    opts,
-    stats_queue,
-):
-    # clean up mem
-    gc.collect()
-    torch.cuda.empty_cache()
-
-    print(opts)
-    args = get_args_parser()
-    args = args.parse_args(opts)
-    args.rank = shard_rank * num_gpus_per_node + local_rank
-    args.world_size = num_shards * num_gpus_per_node
-    args.gpu = local_rank
-    args.dist_url = init_method
-    args.output_dir = output_path
-    output = main(args)
-    stats_queue.put(output)
+if __name__ == "__main__":
+    parser = get_args_parser()
+    args = parser.parse_args()
+    main(args)

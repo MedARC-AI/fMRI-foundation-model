@@ -166,7 +166,7 @@ def evaluate(
             output = model(images)
             loss = criterion(output, target)
 
-        acc = accuracy(output, target)
+        acc = accuracy(output, target)[0]
 
         batch_size = images.shape[0]
         metric_logger.update(loss=loss.item())
@@ -174,14 +174,10 @@ def evaluate(
 
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    print(
-        "* Acc {acc.global_avg:.3f} loss {loss.global_avg:.3f}".format(
-            acc=metric_logger.acc, loss=metric_logger.loss
-        )
-    )
+    print("Averaged stats:", metric_logger)
 
     if log_wandb:
-        epoch_1000x = epoch * 1000
+        epoch_1000x = (epoch + 1) * 1000
         wandb.log(
             {
                 "test_acc": metric_logger.acc.global_avg,

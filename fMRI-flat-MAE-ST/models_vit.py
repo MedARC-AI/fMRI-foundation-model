@@ -11,10 +11,12 @@
 # --------------------------------------------------------
 
 from functools import partial
+from typing import Literal
 
 import torch
 import torch.nn as nn
 from einops import rearrange
+from timm.layers import trunc_normal_
 from util.logging import master_print as print
 from util.hcp_flat import load_hcp_flat_mask
 
@@ -43,6 +45,7 @@ class VisionTransformer(nn.Module):
         sep_pos_embed=True,
         cls_embed=True,
         img_mask=None,
+        global_pool: Literal["avg", "cls", "spatial"] = "avg",
         **kwargs,
     ):
         super().__init__()
@@ -57,6 +60,7 @@ class VisionTransformer(nn.Module):
         input_size = self.patch_embed.input_size
         self.input_size = input_size
         self.cls_embed = cls_embed
+        self.global_pool = global_pool
 
         if self.cls_embed:
             self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
@@ -101,12 +105,14 @@ class VisionTransformer(nn.Module):
         self.norm = norm_layer(embed_dim)
         # --------------------------------------------------------------------------
 
+        self.initialize_mask(img_mask)
+
         self.dropout = nn.Dropout(dropout)
+        if global_pool == "spatial":
+            self.spatial_pool = SpatialPool(self.n_mask_patches, num_classes)
         self.head = nn.Linear(embed_dim, num_classes)
 
         torch.nn.init.normal_(self.head.weight, std=0.02)
-
-        self.initialize_mask(img_mask)
 
     def initialize_mask(self, img_mask):
         if img_mask is not None:
@@ -140,7 +146,7 @@ class VisionTransformer(nn.Module):
             "pos_embed_class",
         }
 
-    def forward_features(self, x, global_pool=True):
+    def forward_features(self, x, global_pool=False):
         # embed patches
         x = self.patch_embed(x)
         N, T, L, C = x.shape  # T: temporal; L: spatial
@@ -195,11 +201,29 @@ class VisionTransformer(nn.Module):
 
     def forward_head(self, x):
         # classifier
-        x = self.norm(x)
-        # x = self.fc_norm(x)
-        x = self.dropout(x)
-        x = self.head(x)
+        if self.global_pool == "spatial":
+            if self.cls_embed:
+                x = x[:, 1:, :]
+            N, _, C = x.shape
+            T = self.patch_embed.t_grid_size
+            L = self.n_mask_patches
+            x = x.view(N, T, L, C).mean(dim=1)  # temporal mean
+            x = self.spatial_pool(x)  # (batch, classes, dim)
+        elif self.global_pool == "cls":
+            assert self.cls_embed
+            x = x[:, 0, :]
+        else:
+            if self.cls_embed:
+                x = x[:, 1:, :]
+            x = x.mean(dim=1)
 
+        x = self.norm(x)
+        x = self.dropout(x)
+
+        if self.global_pool == "spatial":
+            x = (self.head.weight * x).sum(dim=2) + self.head.bias
+        else:
+            x = self.head(x)
         return x
 
     def forward(self, x):
@@ -219,6 +243,40 @@ class VisionTransformer(nn.Module):
             2, self.patch_mask_indices.view(1, 1, -1, 1).expand(N, T, -1, C), x,
         )
         return x
+
+
+class SpatialPool(nn.Module):
+    """
+    Pool a sequence of features with a learned attention weight per class.
+
+    Args:
+        seq_len: Length of the sequence, N.
+        num_classes: Number of classes, K.
+        drop: Dropout probability.
+
+    Shape:
+        - Input: (B, N, C)
+        - Output: (B, K, C)
+    """
+
+    def __init__(self, seq_len: int, num_classes: int):
+        super().__init__()
+        self.seq_len = seq_len
+        self.num_classes = num_classes
+
+        self.weight = nn.Parameter(torch.empty(num_classes, seq_len))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        trunc_normal_(self.weight, std=self.seq_len**-0.5)
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        attn = torch.softmax(self.weight, dim=1)
+        output = attn @ input
+        return output
+
+    def extra_repr(self) -> str:
+        return f"{self.seq_len}, {self.num_classes}"
 
 
 def vit_base_patch16(**kwargs):

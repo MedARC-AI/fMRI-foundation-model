@@ -14,9 +14,10 @@ def random_data() -> torch.Tensor:
     return x
 
 
-def test_vit_small_patch16_fmri(random_data: torch.Tensor):
+@pytest.mark.parametrize("global_pool", ["cls", "avg", "spatial"])
+def test_vit_small_patch16_fmri(random_data: torch.Tensor, global_pool: str):
     model = vit_small_patch16_fmri(
-        t_patch_size=2, cls_embed=True, sep_pos_embed=True
+        t_patch_size=2, cls_embed=True, sep_pos_embed=True, global_pool=global_pool,
     )
     features = model.forward_features(random_data)
     output = model.forward_head(features)

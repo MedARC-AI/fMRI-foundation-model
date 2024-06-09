@@ -1,0 +1,34 @@
+model_name: "flat_NORM_contrastive_"
+hcp_flat_path: "/weka/proj-fmri/shared/hcp_flat"
+
+use_contrastive_loss: True
+decoder_embed_dim: 512
+num_frames: 16
+mask_ratio: .75
+pred_t_dim: 8
+t_patch_size: 2
+cls_embed: True
+no_qkv_bias: False
+sep_pos_embed: True
+trunc_init: False
+norm_pix_loss: True
+
+# Training Configs
+batch_size: 32
+probe_batch_size: 256
+num_workers: 10
+num_epochs: 100
+probe_num_epochs: 10
+seed: 42
+base_lr: 1.0e-3 # Keep the x.0 else will be converted to string
+num_samples_per_epoch: 200000
+probe_num_samples_per_epoch: 50000
+test_num_samples_per_epoch: 50000
+grad_clip: 1.0
+
+# Saving progress
+ckpt_saving: True
+ckpt_interval: 5 # in epochs
+print_interval: 20 # in steps
+resume_from_ckpt: True
+wandb_log: True

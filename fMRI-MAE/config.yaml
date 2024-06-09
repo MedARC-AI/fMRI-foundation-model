@@ -1,18 +1,20 @@
 # Model Config
-model_name: "base_mae_8patch_depth2dec_linprobe_2"
+model_name: "base_lovic_simclr_mae_8patch_depth2dec_linprobe_longtrn"
 use_cls_token: True
 use_contrastive_loss: True
 use_decoder: True  # only use contrastive if False
 use_vic_loss: True
-contrastive_loss_weight: 1.0
+contrastive_loss_weight: 2.0  # 1.0
+vic_loss_weight: 1.0  # 0.05  # 1.0
+gamma: 1.0  # 0.5
 
 # Training Configs
-batch_size: 32 # 32  # 8
+batch_size: 16 # 32  # 8
 num_workers: 10
 num_epochs: 100
 seed: 42
 max_lr: 3.0e-4 # Keep the x.0 else will be converted to string
-num_samples_per_epoch: 4096
+num_samples_per_epoch: 8192  # 2048  # 4096
 test_num_samples_per_epoch: 800 # 960  # 800
 
 # Saving progress

@@ -1,25 +1,26 @@
 # Model Config
-model_name: "downstream_base_mae_16patch_depth2dec_linprobe_brainnet_3"
-mae_model_name: "base_mae_16patch_depth2dec_linprobe"
+model_name: "downstream_base_mae_8patch_depth2dec_linprobe_2"
+mae_model_name: "base_mae_8patch_depth2dec_linprobe_2"
 
 # Training Configs
 global_batch_size: 32
-num_samples_per_epoch: 16384 # 4096
+num_samples_per_epoch: 8192  # 4096  # 16384 # 4096
 mixed_precision: "fp32"
 num_epochs: 150
+iters_scale_factor: 4
 seed: 42
 max_lr: 3.0e-4 # Keep the x.0 else will be converted to string
 multi_subject: False
 multisubject_ckpt: None
 
 # Saving progress
-ckpt_saving: False
+ckpt_saving: True
 ckpt_interval: 1
 resume_from_ckpt: False
 wandb_log: True
 
 # Model Config
-in_dim: 23808  # 393216
+in_dim: 247296 # 23808  # 393216
 hidden_dim: 4096  # 8192 # 2056
 drop: .15
 mixup_pct: 0.00

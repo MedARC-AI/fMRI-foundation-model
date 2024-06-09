@@ -1,6 +1,7 @@
 # Import packages and setup gpu configuration.
 # This code block shouldnt need to be adjusted!
 import os
+import shutil
 import sys
 import json
 import yaml
@@ -109,6 +110,7 @@ mae_ckpt_pth = os.path.abspath(f'../ckpts/{mae_model_name}/last.pth')
 print("mae_ckpt_pth", mae_ckpt_pth)
 
 outdir = os.path.abspath(f'../ckpts/{model_name}')
+os.makedirs(outdir,exist_ok=True)
 print("outdir", outdir)
 
 if type(patch_size) == int:
@@ -182,7 +184,10 @@ def load_ckpt(tag,load_lr=True,load_optimizer=True,load_epoch=True,strict=True,o
 
 
 checkpoint = torch.load(mae_ckpt_pth, map_location=device)
-model.load_state_dict(checkpoint['model_state_dict'])#, strict=False)
+try:
+    model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+except:
+    pass
 
 # set foundation model to evaluation
 model.eval()
@@ -400,13 +405,14 @@ opt_grouped_parameters = [
 
 optimizer = torch.optim.AdamW(opt_grouped_parameters, lr=max_lr)
 
-total_steps = num_epochs * num_iterations_per_epoch
+total_steps = iters_scale_factor * num_epochs * num_iterations_per_epoch
 print("total_steps", total_steps)
 pct_start = 2/num_epochs if num_epochs>1 else 1.
 lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
     optimizer,
     max_lr=max_lr,
     total_steps=total_steps,
+    pct_start=0.1
 )
 
 print("\nDone with model preparations!")
@@ -462,8 +468,8 @@ torch.cuda.empty_cache()
 from einops.layers.torch import Rearrange
 
 MNI_brain = nib.load("/weka/proj-fmri/paulscotti/fMRI-foundation-model/dataset_creation/afni_conversion/tpl-MNI152NLin2009cAsym_res-02_T1w_brain.nii.gz").get_fdata()
-# brain_pos_voxels = MNI_brain[6:94,8:112,10:82]
-brain_pos_voxels = MNI_brain[10:90,12:108,14:78]
+brain_pos_voxels = utils.crop_or_pad(torch.from_numpy(MNI_brain[6:94,8:112,10:82]), img_size)
+# brain_pos_voxels = MNI_brain[10:90,12:108,14:78]
 
 # brain_pos_voxels = brain_pos_voxels[:,30:31,:]
 
@@ -473,7 +479,7 @@ brain_pos_pats = Rearrange(
         ph=patch_height,
         pw=patch_width,
         pf=1,
-    )(torch.Tensor(brain_pos_voxels)[None,None,None])
+    )(brain_pos_voxels[None,None,None])
 
 brain_pos_pats_vit = rearrange(brain_pos_pats, "b ... d -> b (...) d").mean(-1)[0]
     
@@ -494,7 +500,17 @@ if resume_from_ckpt:
     load_ckpt("last",load_lr=True,load_optimizer=True,load_epoch=True)
 elif wandb_log:
     if wandb.run.resumed:
-        load_ckpt("last",load_lr=True,load_optimizer=True,load_epoch=True)
+        if os.path.exists(os.path.join(outdir, 'last.pth')) or os.path.exists(os.path.join(outdir, 'last_old.pth')):
+            if os.path.exists(os.path.join(outdir, 'last_old.pth')):
+                if os.path.exists(os.path.join(outdir, 'last.pth')):
+                    # this is corrupted
+                    os.remove(os.path.join(outdir, f'last.pth'))
+                # set last_old as last
+                shutil.move(os.path.join(outdir, f'last_old.pth'), os.path.join(outdir, f'last.pth'))
+            
+            # ckpt_path = os.path.join(outdir, 'last.pth')
+            # resume_from_ckpt = True
+            load_ckpt("last",load_lr=True,load_optimizer=True,load_epoch=True)
 
 train_dls = [train_dl[f'subj0{s}'] for s in subj_list]
 
@@ -571,24 +587,26 @@ for epoch in progress_bar:
                     break
 
     # you now have voxel_iters and image_iters with num_iterations_per_epoch batches each
-    for train_i in range(num_iterations_per_epoch):
+    for train_i in range(iters_scale_factor * num_iterations_per_epoch):
         with torch.cuda.amp.autocast(dtype=data_type):
             optimizer.zero_grad()
             loss=0.
 
-            voxel_list = [voxel_iters[f"subj0{s}_iter{train_i}"].detach().to(device) for s in subj_list]
-            image = image_iters[train_i].detach()
+            actual_idx = train_i % num_iterations_per_epoch
+
+            voxel_list = [voxel_iters[f"subj0{s}_iter{actual_idx}"].detach().to(device) for s in subj_list]
+            image = image_iters[actual_idx].detach()
             image = image.to(device)
 
             clip_target = clip_img_embedder(image)
             assert not torch.any(torch.isnan(clip_target))
 
             if epoch < int(mixup_pct * num_epochs):
-                perm_list = [perm_iters[f"subj0{s}_iter{train_i}"].detach().to(device) for s in subj_list]
+                perm_list = [perm_iters[f"subj0{s}_iter{actual_idx}"].detach().to(device) for s in subj_list]
                 perm = torch.cat(perm_list, dim=0)
-                betas_list = [betas_iters[f"subj0{s}_iter{train_i}"].detach().to(device) for s in subj_list]
+                betas_list = [betas_iters[f"subj0{s}_iter{actual_idx}"].detach().to(device) for s in subj_list]
                 betas = torch.cat(betas_list, dim=0)
-                select_list = [select_iters[f"subj0{s}_iter{train_i}"].detach().to(device) for s in subj_list]
+                select_list = [select_iters[f"subj0{s}_iter{actual_idx}"].detach().to(device) for s in subj_list]
                 select = torch.cat(select_list, dim=0)
 
             voxel_ridge_list = [mindeye.ridge(voxel_list[si],si) for si,s in enumerate(subj_list)]
@@ -704,7 +722,7 @@ for epoch in progress_bar:
             
     # Save model checkpoint
     if (ckpt_saving) and (epoch % ckpt_interval == 0):
-        save_ckpt()
+        save_ckpt('last')
 
     # wait for other GPUs to catch up if needed
     accelerator.wait_for_everyone()

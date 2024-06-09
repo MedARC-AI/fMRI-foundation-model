@@ -4,7 +4,6 @@ import random
 import numpy as np
 import torch
 from einops import rearrange
-from nilearn import plotting
 from PIL import Image
 from skimage import filters
 from torchvision import transforms
@@ -311,12 +310,14 @@ def get_first_tar(train_urls):
 
 
 class VICRegHandler(nn.Module):
-    def __init__(self, in_dim, num_layers=3, act=F.gelu, h=2048, out_dim=8192):
+    def __init__(self, in_dim, num_layers=3, act=nn.GELU, h=1024, out_dim=4096):
         super().__init__()
         self.projector = nn.Sequential(
             nn.Linear(in_dim, h),
+            nn.LayerNorm(h),
             act(),
             nn.Linear(h, h),
+            nn.LayerNorm(h),
             act(),
             nn.Linear(h, out_dim),
         )
@@ -324,21 +325,53 @@ class VICRegHandler(nn.Module):
     def forward(self, x):
         return self.projector(x)
 
-    @classmethod
+    @staticmethod
+    def filter_global_to_local(l, enc_mask, dec_mask):
+        '''Get the subset of global tokens that correspond to encoder mask only'''
+        comb_mask = enc_mask | dec_mask
+        comb_indices = torch.where(comb_mask)[0]
+        enc_indices = torch.where(enc_mask)[0]
+        # enc_set = set(enc_indices.cpu().tolist()) 
+        
+        # new_mask = torch.zeros_like(comb_indices, dtype=bool)
+        # for i, idx in enumerate(comb_indices):
+        #     if idx in enc_set:
+        #         new_mask[i] = True
+        
+        new_mask = torch.isin(comb_indices, enc_indices)    
+        return l[:, new_mask]
+
+    @staticmethod
     def vicreg_loss(l1, l2, gamma=1.0, lamda=25, mu=25, nu=1, eps=1e-4):
+        # rand_indices = torch.randperm(l1.shape[0])[:int(0.25*l1.shape[0])]
+        # l1 = l1[rand_indices]
+        # l2 = l2[rand_indices]
+
         std_l1 = torch.sqrt(l1.flatten(1).var(dim=0)+eps)  # nxd
         std_l2 = torch.sqrt(l2.flatten(1).var(dim=0)+eps)  # nxd
         var_loss = F.relu(gamma - std_l1).mean() + F.relu(gamma - std_l2).mean()
+        del std_l1, std_l2
 
         sim_loss = F.mse_loss(l1, l2)
 
         l1 = l1 - l1.mean(0, keepdim=True)  # b,n,d
         l2 = l2 - l2.mean(0, keepdim=True)
-        cov_l1 = torch.bmm(l1.permute(1,2,0), l1.permute(1,0,2))/(l1.shape[0]-1)  # n,d,d
-        cov_l2 = torch.bmm(l2.permute(1,2,0), l2.permute(1,0,2))/(l2.shape[0]-1)
-        off_diag = ~torch.eye(cov_l1.shape[1], dtype=bool)[None].to(l1.device).expand_as(cov_l1)
+        # always keep cls and pick a random set of tokens
+        rand_indices = torch.cat([torch.tensor([0]), 1+torch.randperm(l1.shape[1]-1)])[:int(0.2*l1.shape[1])]
+        # off_diag = ~torch.eye(l1.shape[2], dtype=bool)[None].to(l1.device).expand(l1.shape[1], -1, -1)
+        
+        l1_sub = l1[:, rand_indices]
+        del l1
+        cov_l1 = torch.bmm(l1_sub.permute(1,2,0), l1_sub.permute(1,0,2))/(l1_sub.shape[0]-1)  # 0.1*n,d,d
+        # cov_loss = (cov_l1[off_diag]**2).sum()/(l1_sub.shape[1]*l1_sub.shape[2])  # too much mem needed
+        cov_loss = ((cov_l1**2).sum() - (torch.diagonal(cov_l1, dim1=1,dim2=2)**2).sum())/(l1_sub.shape[1]*l1_sub.shape[2])
+        del cov_l1, l1_sub
 
-        cov_loss = ((cov_l1[off_diag]**2).sum() + (cov_l2[off_diag]**2).sum())/(l1.shape[1]*l1.shape[2])  # div by nxd
+        l2_sub = l2[:, rand_indices]
+        del l2
+        cov_l2 = torch.bmm(l2_sub.permute(1,2,0), l2_sub.permute(1,0,2))/(l2_sub.shape[0]-1)
+        cov_loss = cov_loss + ((cov_l2**2).sum() - (torch.diagonal(cov_l2, dim1=1,dim2=2)**2).sum())/(l2_sub.shape[1]*l2_sub.shape[2])  # div by nxd
+        del cov_l2, l2_sub
 
         vic_loss = lamda * sim_loss + mu * var_loss + nu * cov_loss
 
@@ -346,7 +379,7 @@ class VICRegHandler(nn.Module):
 
 
 class SimCLRHandler(nn.Module):
-    def __init__(self, in_dim, num_layers=2, act=F.gelu, out_dim=1024):
+    def __init__(self, in_dim, num_layers=2, act=nn.GELU, out_dim=1024):
         super().__init__()
         self.projector = nn.Sequential(
             nn.Linear(in_dim, in_dim),
@@ -357,7 +390,7 @@ class SimCLRHandler(nn.Module):
     def forward(self, x):
         return self.projector(x)
 
-    @classmethod
+    @staticmethod
     def simclr_loss(lats, temp=0.006):
         logits = (nn.functional.normalize(lats.flatten(1),dim=-1) @
                     nn.functional.normalize(lats.flatten(1),dim=-1).T) / temp

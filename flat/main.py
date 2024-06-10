@@ -124,7 +124,7 @@ if utils.is_interactive(): # Use less samples per epoch for debugging
     num_samples_per_epoch = 2000
     test_num_samples_per_epoch = 2000
 
-model = mae_vit_small_patch16_fmri(
+model = mae_vit_small_fmri(
     decoder_embed_dim=decoder_embed_dim,
     t_patch_size=t_patch_size,
     pred_t_dim=pred_t_dim,

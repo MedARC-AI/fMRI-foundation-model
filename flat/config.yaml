@@ -3,6 +3,8 @@ hcp_flat_path: "/weka/proj-medarc/shared/hcp_flat"
 
 use_contrastive_loss: True
 use_decoder: True
+patch_size: 16
+
 decoder_embed_dim: 512
 num_frames: 16
 mask_ratio: .75
@@ -27,19 +29,26 @@ nu: 1
 rand_frac: 0.1  # 0.2
 # whether to apply vic to cls tok (if cont is also on, 2 losses will apply to cls token)
 use_vic_cls: True
+norm_pix_loss: False
+pct_masks_to_decode: 1
 
 # Training Configs
-batch_size: 32
-probe_batch_size: 256
+batch_size: 32 
 num_workers: 10
 num_epochs: 100
-probe_num_epochs: 10
 seed: 42
 base_lr: 3.0e-4 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 200000
-probe_num_samples_per_epoch: 50000
 test_num_samples_per_epoch: 50000
 grad_clip: 1.0  # set 0 for no clip
+grad_accumulation_steps: 1
+test_set: False
+
+# Downstream probe config
+probe_num_samples_per_epoch: 100000
+probe_num_epochs: 30
+probe_batch_size: 8
+probe_base_lr: 3.0e-4
 
 # Saving progress
 ckpt_saving: True

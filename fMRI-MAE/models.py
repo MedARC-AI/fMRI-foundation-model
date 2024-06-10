@@ -125,6 +125,9 @@ class Transformer(nn.Module):
     ):
         super().__init__()
         self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.mlp_dim = mlp_dim
+        self.dim_head = dim_head
         self.norm = nn.LayerNorm(embed_dim)
         self.layers = nn.ModuleList([])
         for _ in range(depth):
@@ -403,77 +406,18 @@ transformer_mapping = {
 
 def get_vit(size, **args):
     encoder = transformer_mapping[size["encoder"]](**args)
-    decoder = transformer_mapping[size["decoder"]](**args)
+    if args['use_decoder_same_emb_dim']:
+        depth = args.pop('decoder_depth', None)
+        assert depth is not None and depth > 0 , "for same emb dim decoder depth has to be provided and be >0"
+        decoder = Transformer(
+            embed_dim=encoder.embed_dim,
+            depth=depth,
+            num_heads=encoder.num_heads,
+            mlp_dim=encoder.mlp_dim,
+            dim_head=encoder.dim_head,
+            **args
+        )
+    else:
+        decoder = transformer_mapping[size["decoder"]](**args)
     return VisionTransformerMAE(encoder=encoder, decoder=decoder, **args)
-
-
-class ContrastMAE(VisionTransformerMAE):
-    def forward(self, x, encoder_mask=None, decoder_mask=None, device="cuda", verbose=False):
-        # ENCODER
-        if decoder_mask is None:            
-            if verbose: print(x.shape)
-            x = self.patchify(x)
-            if verbose: print("patched", x.shape)
-            x = rearrange(x, "b ... d -> b (...) d")
-            if verbose: print("reshaped", x.shape)
-            
-            assert encoder_mask.ndim > 1, "encoder_mask must be defined for every datapoint in batch"
-            x = torch.gather(x, 1, encoder_mask.unsqueeze(-1).expand(-1,-1,x.shape[-1]))
-            if verbose: print("masked", x.shape)
-            
-            x = self.patch_to_emb(x.to(device))
-            if verbose: print("patched_emb", x.shape)
-
-            if not self.use_rope_emb:
-                if verbose: print("pe", self.posemb_sincos_4d.shape)
-                x = x + torch.gather(
-                    self.posemb_sincos_4d.to(device)[None].expand(x.shape[0]),
-                    1,
-                    encoder_mask.unsqueeze(-1).expand(-1, -1, x.shape[-1]),
-                )
-            if self.use_cls_token:
-                cls_tokens = self.cls_token.expand(len(x), -1, -1)
-                x = torch.cat((cls_tokens, x), dim=1)
-            if verbose: print("masked", x.shape)
-            x = self.encoder_transformer(x, mask=encoder_mask if self.use_rope_emb else None)
-            if verbose: print(x.shape)
-        else:  # DECODER
-            if verbose: print(x.shape)
-            if self.encoder_embed_dim != self.decoder_embed_dim:
-                x = self.encoder_to_decoder(x.to(device))
-                if verbose: print("Linear", x.shape)
-            B, _, _ = x.shape
-            N = decoder_mask.sum()//B
-            mask = None
-            if not self.use_rope_emb:
-                pos_embed = self.posemb_sincos_4d.to(x.device)
-                if verbose: print("pe", pos_embed.shape)
-                if self.encoder_embed_dim != self.decoder_embed_dim:
-                    pos_embed = self.encoder_to_decoder(pos_embed)
-                    if verbose: print("Linear pe", pos_embed.shape)
-                pos_emd_encoder = pos_embed[encoder_mask]
-                pos_emd_decoder = pos_embed[decoder_mask]
-                if verbose: print("pos_emd_encoder", pos_emd_encoder.shape)
-                if verbose: print("pos_emd_decoder", pos_emd_decoder.shape)
-                if self.use_cls_token:
-                    cls_tokens = x[:,:1,:]
-                    x = x[:,1:,:]
-                
-                x = torch.cat([x + pos_emd_encoder, 
-                               self.mask_token.repeat(B, N, 1) + pos_emd_decoder], 
-                              dim=1)
-                if self.use_cls_token:
-                    x = torch.cat([cls_tokens, x], dim=1)
-            else:
-                mask = torch.cat((torch.where(encoder_mask)[0], torch.where(decoder_mask)[0]))
-                # No abs positional embeddings for RoPE
-                x = torch.cat([x, 
-                               self.mask_token.repeat(B, N - 1 if self.use_cls_token else N, 1)],
-                              dim=1)
-            if verbose: print("x_concat", x.shape)
-            x = self.decoder_transformer(x, mask=mask)
-            if verbose: print(x.shape)
-            x = self.decoder_proj(x)
-            if verbose: print("proj", x.shape)
-        return x
     

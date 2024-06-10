@@ -1,7 +1,8 @@
-model_name: "flat_NORM_contrastive_"
-hcp_flat_path: "/weka/proj-fmri/shared/hcp_flat"
+model_name: "ps16_large"
+hcp_flat_path: "/weka/proj-medarc/shared/hcp_flat"
 
-use_contrastive_loss: True
+patch_size: 16
+use_contrastive_loss: False
 decoder_embed_dim: 512
 num_frames: 16
 mask_ratio: .75
@@ -11,20 +12,26 @@ cls_embed: True
 no_qkv_bias: False
 sep_pos_embed: True
 trunc_init: False
-norm_pix_loss: True
+norm_pix_loss: False
+pct_masks_to_decode: 1
 
 # Training Configs
-batch_size: 32
-probe_batch_size: 256
+batch_size: 32 
 num_workers: 10
 num_epochs: 100
-probe_num_epochs: 10
 seed: 42
 base_lr: 1.0e-3 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 200000
-probe_num_samples_per_epoch: 50000
 test_num_samples_per_epoch: 50000
 grad_clip: 1.0
+grad_accumulation_steps: 1
+test_set: False
+
+# Downstream probe config
+probe_num_samples_per_epoch: 100000
+probe_num_epochs: 30
+probe_batch_size: 8
+probe_base_lr: 3.0e-4
 
 # Saving progress
 ckpt_saving: True

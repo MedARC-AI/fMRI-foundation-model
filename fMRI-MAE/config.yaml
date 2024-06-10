@@ -3,10 +3,20 @@ model_name: "base_lovic_simclr_mae_8patch_depth2dec_linprobe_longtrn"
 use_cls_token: True
 use_contrastive_loss: True
 use_decoder: True  # only use contrastive if False
+contrastive_loss_weight: 1.0  # 2.0
+
+# VICReg params
 use_vic_loss: True
-contrastive_loss_weight: 2.0  # 1.0
 vic_loss_weight: 1.0  # 0.05  # 1.0
-gamma: 1.0  # 0.5
+gamma: 0.5  # 1.0  # 0.5
+# mu->v, lamda->i, nu->c
+mu: 25
+lamda: 25
+nu: 1
+# fraction of tokens to use for cov loss (all tokens don't fit in mem)
+rand_frac: 0.1  # 0.2
+# whether to apply vic to cls tok (if cont is also on, 2 losses will apply to cls token)
+use_vic_cls: True
 
 # Training Configs
 batch_size: 16 # 32  # 8

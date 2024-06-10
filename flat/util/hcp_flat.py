@@ -110,7 +110,8 @@ def to_clips(frames: int = 16):
         for key, images, meta in src:
             offset = random.randint(0, frames)
             for start in range(offset, images.shape[1] - frames, frames):
-                yield key, images[:, start : start + frames].copy(), meta
+                # yield key, images[:, start : start + frames].copy(), meta
+                yield key, images[:, start : start + frames].clone(), meta
     return _filter
 
 

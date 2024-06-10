@@ -1,7 +1,8 @@
 model_name: "flat_NORM_contrastive_"
-hcp_flat_path: "/weka/proj-fmri/shared/hcp_flat"
+hcp_flat_path: "/weka/proj-medarc/shared/hcp_flat"
 
 use_contrastive_loss: True
+use_decoder: True
 decoder_embed_dim: 512
 num_frames: 16
 mask_ratio: .75
@@ -12,6 +13,20 @@ no_qkv_bias: False
 sep_pos_embed: True
 trunc_init: False
 norm_pix_loss: True
+contrastive_loss_weight: 1.0  # 2.0
+
+# VICReg params
+use_vic_loss: True
+vic_loss_weight: 1.0  # 0.05  # 1.0
+gamma: 0.5  # 1.0  # 0.5
+# mu->v, lamda->i, nu->c
+mu: 25
+lamda: 25
+nu: 1
+# fraction of tokens to use for cov loss (all tokens don't fit in mem)
+rand_frac: 0.1  # 0.2
+# whether to apply vic to cls tok (if cont is also on, 2 losses will apply to cls token)
+use_vic_cls: True
 
 # Training Configs
 batch_size: 32
@@ -20,15 +35,15 @@ num_workers: 10
 num_epochs: 100
 probe_num_epochs: 10
 seed: 42
-base_lr: 1.0e-3 # Keep the x.0 else will be converted to string
+base_lr: 3.0e-4 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 200000
 probe_num_samples_per_epoch: 50000
 test_num_samples_per_epoch: 50000
-grad_clip: 1.0
+grad_clip: 1.0  # set 0 for no clip
 
 # Saving progress
 ckpt_saving: True
 ckpt_interval: 5 # in epochs
 print_interval: 20 # in steps
-resume_from_ckpt: True
-wandb_log: True
+resume_from_ckpt: False
+wandb_log: False

@@ -432,6 +432,71 @@ class MaskedAutoencoderViT(nn.Module):
 
             return [x1,x2], [mask1,mask2], ids_restore
 
+    def forward_encoder_with_mask(self, x, ids_keep):
+        # embed patches
+        x = self.patch_embed(x)
+        N, T, L, C = x.shape
+
+        x = x.reshape(N, T * L, C)
+        # mask out tokens
+        x = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).repeat(1, 1, C))
+        
+        # append cls token
+        if self.cls_embed:
+            cls_token = self.cls_token
+            cls_tokens = cls_token.expand(x.shape[0], -1, -1)
+            x = torch.cat((cls_tokens, x), dim=1)
+        
+        # add pos embed w/o cls token
+        if self.sep_pos_embed:
+            pos_embed = self.pos_embed_spatial.repeat(
+                1, self.input_size[0], 1
+            ) + torch.repeat_interleave(
+                self.pos_embed_temporal,
+                self.input_size[1] * self.input_size[2],
+                dim=1,
+            )
+            pos_embed = pos_embed.expand(x.shape[0], -1, -1)
+            pos_embed = torch.gather(
+                pos_embed,
+                dim=1,
+                index=ids_keep.unsqueeze(-1).repeat(1, 1, pos_embed.shape[2]),
+            )
+            if self.cls_embed:
+                pos_embed = torch.cat(
+                    [
+                        self.pos_embed_class.expand(pos_embed.shape[0], -1, -1),
+                        pos_embed,
+                    ],
+                    1,
+                )
+        else:
+            if self.cls_embed:
+                cls_ind = 1
+            else:
+                cls_ind = 0
+            pos_embed = self.pos_embed[:, cls_ind:, :].expand(x.shape[0], -1, -1)
+            pos_embed = torch.gather(
+                pos_embed,
+                dim=1,
+                index=ids_keep.unsqueeze(-1).repeat(1, 1, pos_embed.shape[2]),
+            )
+            if self.cls_embed:
+                pos_embed = torch.cat(
+                    [
+                        self.pos_embed[:, :1, :].expand(x.shape[0], -1, -1),
+                        pos_embed,
+                    ],
+                    1,
+                )
+
+        x = x.view([N, -1, C]) + pos_embed
+
+        for blk in self.blocks:
+            x = blk(x)
+        x = self.norm(x)
+        return x
+
     def forward_decoder(self, x, ids_restore, use_contrastive_loss=False):
         N = x.shape[0]
         T = self.patch_embed.t_grid_size

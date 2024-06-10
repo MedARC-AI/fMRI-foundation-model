@@ -564,6 +564,8 @@ for epoch in progress_bar:
 
                 # l1 = encoder_out[:, 1:, :]
                 l1 = encoder_out
+                
+                # remove cls, rearrange and add back cls
                 l2 = encoder_out2[:, 1:, :]
                 l2_sub = utils.VICRegHandler.filter_global_to_local(l2, encoder_mask, decoder_mask)
                 l2_sub = torch.cat([l2[:, :1, :], l2_sub], dim=1)
@@ -571,7 +573,8 @@ for epoch in progress_bar:
                 l1_proj = model.vicreg_handler(l1)
                 l2_proj = model.vicreg_handler(l2_sub)
 
-                vic_loss = utils.VICRegHandler.vicreg_loss(l1_proj, l2_proj, gamma=gamma) # gamma=0.5)
+                vic_loss = utils.VICRegHandler.vicreg_loss(l1_proj, l2_proj, gamma=gamma, lamda=lamda, mu=mu, nu=nu, 
+                                                           rand_frac=rand_frac, use_vic_cls=use_vic_cls)
 
                 if use_contrastive_loss:
                     temp = contrastive_temps[epoch]

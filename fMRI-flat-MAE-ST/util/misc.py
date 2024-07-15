@@ -16,11 +16,13 @@ import math
 import os
 import time
 from collections import defaultdict, deque, OrderedDict
+from typing import Literal
 
 import util.logging as logging
 import psutil
 import torch
 import torch.distributed as dist
+import torch.nn.functional as F
 from iopath.common.file_io import g_pathmgr as pathmgr
 from util.logging import master_print as print
 from torch import inf
@@ -521,3 +523,18 @@ def set_requires_grad(
                 p.requires_grad_(requires_grad)
                 updated.append(name)
     return updated
+
+
+def group_reduce(
+    x: torch.Tensor, groups: torch.Tensor, reduction: Literal["sum", "mean"] = "sum"
+) -> torch.Tensor:
+    assert reduction in ("sum", "mean"), f"invalid reduction {reduction}"
+    shape = x.shape
+    x = x.flatten(1)
+    group_ids, indices = torch.unique(groups, return_inverse=True)
+    one_hot = F.one_hot(indices).to(x.dtype)
+    if reduction == "mean":
+        one_hot = one_hot / one_hot.sum(dim=0, keepdim=True)
+    x = one_hot.t() @ x
+    x = x.reshape((x.size(0), *shape[1:]))
+    return group_ids, x

@@ -19,6 +19,7 @@ from einops import rearrange
 from util import video_vit
 from util.logging import master_print as print
 from util.hcp_flat import load_hcp_flat_mask
+from util.misc import group_reduce
 
 
 class MaskedAutoencoderViT(nn.Module):
@@ -467,6 +468,9 @@ class MaskedAutoencoderViT(nn.Module):
         pred: [N, t*h*w, u*p*p*C]
         mask: [N, t*h*w], 0 is keep, 1 is remove,
         """
+        # Nb, this way of selecting target frames picks the first frame for each
+        # segment, *except* for the last one. This is from the official implementation
+        # but might consider changing.
         _imgs = torch.index_select(
             imgs,
             2,
@@ -499,6 +503,81 @@ class MaskedAutoencoderViT(nn.Module):
         pred = self.forward_decoder(latent, ids_restore)  # [N, L, p*p*C]
         loss = self.forward_loss(imgs, pred, mask)
         return loss, pred, mask
+
+    @torch.no_grad()
+    def masked_recon(self, imgs, pred, mask):
+        # imgs: [N, C, T, H, W]
+        # pred: [N, t*h*w, u*p*p*C]
+        # mask: [N, t*h*w], 0 is keep, 1 is remove,
+        target = torch.index_select(
+            imgs,
+            2,
+            torch.linspace(
+                0,
+                imgs.shape[2] - 1,
+                self.pred_t_dim,
+            )
+            .long()
+            .to(imgs.device),
+        )
+
+        # this caches patch info for unpatchify
+        # necessary if batch size is different from training
+        self.patchify(target)
+
+        target = torch.einsum("ncthw->nthwc", target)
+
+        pred = self.unpatchify(pred.detach())
+        pred = torch.einsum("ncthw->nthwc", pred)
+
+        mask = mask.unsqueeze(-1).repeat(
+            1, 1, self.patch_embed.patch_size[0]**2 * imgs.shape[1]
+        )  # (N, T*H*W, p*p*c)
+        mask = self.unpatchify(mask)  # 1 is removing, 0 is keeping
+        mask = torch.einsum("ncthw->nthwc", mask)
+
+        # masked image
+        im_masked = target * (1 - mask)
+
+        # MAE reconstruction pasted with visible patches
+        im_paste = target * (1 - mask) + pred * mask
+        return target, pred, mask, im_masked, im_paste
+
+    @torch.no_grad()
+    def denoise_recon(self, groups, imgs, pred, mask):
+        # imgs: [N, C, T, H, W]
+        N, _, T = imgs.shape[:3]
+        assert groups.shape == (N, T), "invalid shape for groups"
+
+        # target, pred, mask: [N, T / t, H, W, C]
+        target, pred, mask, _, _ = self.masked_recon(imgs, pred, mask)
+        pred = mask * pred  # 1 is removing, 0 is keeping
+
+        groups = torch.index_select(
+            groups,
+            1,
+            torch.linspace(
+                0,
+                T - 1,
+                self.pred_t_dim,
+            )
+            .long()
+            .to(imgs.device),
+        )
+
+        # flatten N and T
+        target = target.flatten(0, 1)
+        pred = pred.flatten(0, 1)
+        mask = mask.flatten(0, 1)
+        groups = groups.flatten(0, 1)
+
+        group_ids, pred = group_reduce(pred, groups)
+        _, counts = group_reduce(mask, groups)
+        _, target = group_reduce(target, groups, reduction="mean")
+
+        mask = (counts > 0).float()
+        pred = mask * (pred / counts.clamp(min=1.0))
+        return group_ids, target, pred, counts
 
 
 def mae_vit_base_patch16(**kwargs):

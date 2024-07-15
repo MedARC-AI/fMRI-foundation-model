@@ -27,6 +27,7 @@ def create_hcp_flat(
     clip_mode: Literal["seq", "event"] = "seq",
     target: Optional[Literal["task", "trial_type"]] = None,
     frames: int = 16,
+    stride: Optional[int] = None,
     shuffle: Optional[bool] = None,
     buffer_size_mb: int = 3840,
 ) -> wds.WebDataset:
@@ -41,6 +42,8 @@ def create_hcp_flat(
     """
     root = root or os.environ.get("HCP_FLAT_ROOT") or HCP_FLAT_ROOT
     urls = get_hcp_flat_urls(root, split, shards)
+    if shuffle is None:
+        shuffle = split == "train"
 
     if shuffle:
         buffer_size = int(buffer_size_mb * 1024 * 1024 / (frames * FRAME_SIZE_BYTES))
@@ -49,7 +52,7 @@ def create_hcp_flat(
         buffer_size = 0
 
     if clip_mode == "seq":
-        clipping = seq_clips(frames)
+        clipping = seq_clips(frames, stride=stride, is_training=shuffle)
     elif clip_mode == "event":
         all_events_path = Path(root) / "all_events.json.gz"
         with gzip.open(all_events_path) as f:
@@ -149,11 +152,13 @@ def unmask(img: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return unmasked
 
 
-def seq_clips(frames: int = 16):
+def seq_clips(frames: int = 16, stride: Optional[int] = None, is_training: bool = True):
+    stride = stride or frames
+
     def _filter(src: IterableDataset[Tuple[np.ndarray, Dict[str, Any]]]):
         for img, meta in src:
-            offset = random.randint(0, frames)
-            for start in range(offset, len(img) - frames, frames):
+            offset = random.randint(0, frames) if is_training else 0
+            for start in range(offset, len(img) - frames, stride):
                 # copy to avoid a memory leak due to storing the entire underlying array
                 # https://github.com/webdataset/webdataset/issues/354
                 clip = img[start : start + frames].copy()

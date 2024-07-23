@@ -130,8 +130,16 @@ def train_one_epoch(
             break
 
     if log_wandb:
+        target, _, _, im_masked, im_paste = model_without_ddp.masked_recon(
+            samples, pred, mask
+        )
         fig = vis.plot_mask_pred(
-            model_without_ddp, samples, pred, mask, mean=0.5, std=0.2
+            target,
+            im_masked,
+            im_paste,
+            img_mask=model_without_ddp.img_mask,
+            mean=0.5,
+            std=0.2,
         )
         img = vis.fig2pil(fig)
         wandb.log({"train_mask_pred": wandb.Image(img)}, step=epoch_1000x)

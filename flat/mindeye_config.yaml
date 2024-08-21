@@ -1,0 +1,28 @@
+# Model Config
+downstream_model_name: "downstream_nsdflat_large"
+mae_model_name: "nsdflat_large"
+
+# Training Configs
+global_batch_size: 32
+mixed_precision: "fp16"
+num_epochs: 12
+seed: 42
+max_lr: 3.0e-4 # Keep the x.0 else will be converted to string
+multi_subject: False
+multisubject_ckpt: None
+
+# Saving progress
+ckpt_saving: False
+ckpt_interval: 99
+resume_from_ckpt: False
+wandb_log: False
+
+# Model Config
+in_dim: 393216
+hidden_dim: 2056
+drop: .15
+mixup_pct: 0.00
+
+# Data Config
+nsd_flat_path: "/weka/proj-medarc/shared/NSD-Flat"
+num_sessions: 40

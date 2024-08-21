@@ -1,5 +1,7 @@
-model_name: "ps16_large"
-hcp_flat_path: "/weka/proj-medarc/shared/hcp_flat"
+model_name: "nsdflat_large"
+hcp_flat_path: "/weka/proj-medarc/shared/NSD-Flat"
+# "/weka/proj-medarc/shared/hcp_flat"
+# "/weka/proj-medarc/shared/hcp_flat"
 
 patch_size: 16
 use_contrastive_loss: False

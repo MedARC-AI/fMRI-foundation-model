@@ -275,3 +275,36 @@ def get_first_tar(train_urls):
         return f"/scratch/fmri_foundation_datasets/NSD_MNI_wds/{first_tar}.tar"
     else:
         return None
+
+
+import hashlib
+def hash_image(image_tensor):
+    # Convert tensor to bytes
+    image_bytes = image_tensor.detach().cpu().numpy().tobytes()
+    # Hash the bytes using SHA-256
+    hash_object = hashlib.sha256(image_bytes)
+    hex_dig = hash_object.hexdigest()
+    return hex_dig
+
+
+def find_paired_indices(x):
+    unique_elements, counts = torch.unique(x, return_counts=True)
+    repeated_elements = unique_elements[counts > 1]
+    paired_indices = []
+    for element in repeated_elements:
+        indices = (x == element).nonzero(as_tuple=True)[0]
+        for i in range(len(indices) - 1):
+            if i>0:
+                continue
+            paired_indices.append([indices[i].item(), indices[i+1].item()])
+    return paired_indices
+
+
+def zscore(data,train_mean=None,train_std=None):
+    # assuming that first dim is num_samples and second dim is num_voxels
+    if train_mean is None:
+        train_mean = np.mean(data,axis=0)
+    if train_std is None:
+        train_std = np.std(data,axis=0)
+    zscored_data = (data - train_mean) / (train_std + 1e-6)
+    return zscored_data

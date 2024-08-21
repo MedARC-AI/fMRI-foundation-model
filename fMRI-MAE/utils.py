@@ -342,10 +342,15 @@ class VICRegHandler(nn.Module):
         return l[:, new_mask]
 
     @staticmethod
-    def vicreg_loss(l1, l2, gamma=1.0, lamda=25, mu=25, nu=1, eps=1e-4):
-        # rand_indices = torch.randperm(l1.shape[0])[:int(0.25*l1.shape[0])]
-        # l1 = l1[rand_indices]
-        # l2 = l2[rand_indices]
+    def vicreg_loss(l1, l2, gamma=1.0, lamda=25, mu=25, nu=1, rand_frac=0.2, use_vic_cls=True, eps=1e-4):
+        if use_vic_cls:
+            # always keep cls and pick a random set of tokens
+            rand_indices = torch.cat([torch.tensor([0]), 1+torch.randperm(l1.shape[1]-1)])[:int(rand_frac*l1.shape[1])]
+        else:
+            # drop cls tokens from loss calc
+            l1 = l1[:, 1:]
+            l2 = l2[:, 1:]
+            rand_indices = torch.randperm(l1.shape[1])[:int(rand_frac*l1.shape[1])]
 
         std_l1 = torch.sqrt(l1.flatten(1).var(dim=0)+eps)  # nxd
         std_l2 = torch.sqrt(l2.flatten(1).var(dim=0)+eps)  # nxd
@@ -355,15 +360,11 @@ class VICRegHandler(nn.Module):
         sim_loss = F.mse_loss(l1, l2)
 
         l1 = l1 - l1.mean(0, keepdim=True)  # b,n,d
-        l2 = l2 - l2.mean(0, keepdim=True)
-        # always keep cls and pick a random set of tokens
-        rand_indices = torch.cat([torch.tensor([0]), 1+torch.randperm(l1.shape[1]-1)])[:int(0.2*l1.shape[1])]
-        # off_diag = ~torch.eye(l1.shape[2], dtype=bool)[None].to(l1.device).expand(l1.shape[1], -1, -1)
+        l2 = l2 - l2.mean(0, keepdim=True)                
         
         l1_sub = l1[:, rand_indices]
         del l1
         cov_l1 = torch.bmm(l1_sub.permute(1,2,0), l1_sub.permute(1,0,2))/(l1_sub.shape[0]-1)  # 0.1*n,d,d
-        # cov_loss = (cov_l1[off_diag]**2).sum()/(l1_sub.shape[1]*l1_sub.shape[2])  # too much mem needed
         cov_loss = ((cov_l1**2).sum() - (torch.diagonal(cov_l1, dim1=1,dim2=2)**2).sum())/(l1_sub.shape[1]*l1_sub.shape[2])
         del cov_l1, l1_sub
 

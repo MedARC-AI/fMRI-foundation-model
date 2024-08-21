@@ -34,18 +34,18 @@ def plot_mask_pred(
     )
     target = torch.einsum("ncthw->nthwc", target)
     target = target.flatten(0, 1)[:nrow].cpu()
+    
+    mask = mask.unsqueeze(-1).repeat(
+        1, 1, pred.shape[-1]
+    )  # (N, T*H*W, p*p*c)
+    mask = model.unpatchify(mask)  # 1 is removing, 0 is keeping
+    mask = torch.einsum("ncthw->nthwc", mask).cpu()
+    mask = mask.flatten(0, 1)[:nrow].cpu()
 
     pred = pred.detach()
     pred = model.unpatchify(pred)
     pred = torch.einsum("ncthw->nthwc", pred).cpu()
     pred = pred.flatten(0, 1)[:nrow].cpu()
-
-    mask = mask.unsqueeze(-1).repeat(
-        1, 1, model.patch_embed.patch_size[0]**2 * imgs.shape[1]
-    )  # (N, T*H*W, p*p*c)
-    mask = model.unpatchify(mask)  # 1 is removing, 0 is keeping
-    mask = torch.einsum("ncthw->nthwc", mask).cpu()
-    mask = mask.flatten(0, 1)[:nrow].cpu()
 
     # masked image
     im_masked = target * (1 - mask)

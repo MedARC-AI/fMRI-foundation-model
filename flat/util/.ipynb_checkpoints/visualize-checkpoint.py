@@ -17,7 +17,6 @@ def plot_mask_pred(
     mean: Optional[Any] = None,
     std: Optional[Any] = None,
     nrow: int = 8,
-    norm_pix_loss: bool = False,
 ):
     # imgs: [N, C, T, H, W]
     # pred: [N, t*h*w, u*p*p*C]
@@ -33,25 +32,20 @@ def plot_mask_pred(
         .long()
         .to(imgs.device),
     )
-    if norm_pix_loss:
-        target_mean = target.mean(dim=-1, keepdim=True)
-        target_var = target.var(dim=-1, keepdim=True)
     target = torch.einsum("ncthw->nthwc", target)
     target = target.flatten(0, 1)[:nrow].cpu()
-
-    pred = pred.detach()
-    if norm_pix_loss:
-        pred = (pred * target_var) + target_mean
-    pred = model.unpatchify(pred)
-    pred = torch.einsum("ncthw->nthwc", pred).cpu()
-    pred = pred.flatten(0, 1)[:nrow].cpu()
-
+    
     mask = mask.unsqueeze(-1).repeat(
-        1, 1, model.patch_embed.patch_size[0]**2 * imgs.shape[1]
+        1, 1, pred.shape[-1]
     )  # (N, T*H*W, p*p*c)
     mask = model.unpatchify(mask)  # 1 is removing, 0 is keeping
     mask = torch.einsum("ncthw->nthwc", mask).cpu()
     mask = mask.flatten(0, 1)[:nrow].cpu()
+
+    pred = pred.detach()
+    pred = model.unpatchify(pred)
+    pred = torch.einsum("ncthw->nthwc", pred).cpu()
+    pred = pred.flatten(0, 1)[:nrow].cpu()
 
     # masked image
     im_masked = target * (1 - mask)

@@ -56,7 +56,9 @@ def create_nsd_flat(
     frames: int = 16,
     shuffle: Optional[bool] = True,
     buffer_size_mb: int = 3840,
+    gsr: Optional[bool] = True,
     sub: Optional[str] = None,
+    run: Optional[str] = None,
 ) -> wds.WebDataset:
     """
     Create NSD-Flat dataset. Yields samples of (key, images) where key is the webdataset
@@ -72,20 +74,36 @@ def create_nsd_flat(
     else:
         buffer_size = 0
 
-    dataset = (
-        wds.WebDataset(
-            urls,
-            resampled=shuffle,
-            shardshuffle=1000 if shuffle else False,
-            nodesplitter=wds.split_by_node,
-            select_files=partial(select_files, sub=sub),
+    if gsr:
+        dataset = (
+            wds.WebDataset(
+                urls,
+                resampled=shuffle,
+                shardshuffle=1000 if shuffle else False,
+                nodesplitter=wds.split_by_node,
+                select_files=partial(select_files, sub=sub, run=run),
+            )
+            .decode()
+            .map(partial(extract_sample,gsr=gsr))
+            .compose(clipping)
+            .shuffle(buffer_size)
+            .map_tuple(partial(to_tensor, mask=load_nsd_flat_mask()))
         )
-        .decode()
-        .map(extract_sample)
-        .compose(clipping)
-        .shuffle(buffer_size)
-        .map_tuple(partial(to_tensor, mask=load_nsd_flat_mask()))
-    )
+    else:
+        dataset = (
+            wds.WebDataset(
+                urls,
+                resampled=shuffle,
+                shardshuffle=1000 if shuffle else False,
+                nodesplitter=wds.split_by_node,
+                select_files=partial(select_files, sub=sub, run=run),
+            )
+            .decode()
+            .map(partial(extract_sample,gsr=gsr))
+            .compose(clipping)
+            .shuffle(buffer_size)
+            .map_tuple(partial(to_tensor_gsrFalse, mask=load_nsd_flat_mask()))
+        )
     return dataset
 
 def get_nsd_flat_urls(
@@ -117,6 +135,7 @@ def create_hcp_flat(
     frames: int = 16,
     shuffle: Optional[bool] = None,
     buffer_size_mb: int = 3840,
+    gsr: Optional[bool] = True,
 ) -> wds.WebDataset:
     """
     Create HCP-Flat dataset. Yields samples of (key, images) where key is the webdataset
@@ -158,20 +177,36 @@ def create_hcp_flat(
 
     # Nb, in initial pretraining runs we shuffled before generating clips, which
     # resulted in less random batches. Tbd whether this makes a difference.
-    dataset = (
-        wds.WebDataset(
-            urls,
-            resampled=shuffle,
-            shardshuffle=1000 if shuffle else False,
-            nodesplitter=wds.split_by_node,
-            select_files=partial(select_files, task_only=clip_mode=="event"),
+    if gsr:
+        dataset = (
+            wds.WebDataset(
+                urls,
+                resampled=shuffle,
+                shardshuffle=1000 if shuffle else False,
+                nodesplitter=wds.split_by_node,
+                select_files=partial(select_files, task_only=clip_mode=="event"),
+            )
+            .decode()
+            .map(partial(extract_sample,gsr=gsr))
+            .compose(clipping)
+            .shuffle(buffer_size)
+            .map_tuple(partial(to_tensor, mask=load_nsd_flat_mask()))
         )
-        .decode()
-        .map(extract_sample)
-        .compose(clipping)
-        .shuffle(buffer_size)
-        .map_tuple(partial(to_tensor, mask=load_hcp_flat_mask()))
-    )
+    else:
+        dataset = (
+            wds.WebDataset(
+                urls,
+                resampled=shuffle,
+                shardshuffle=1000 if shuffle else False,
+                nodesplitter=wds.split_by_node,
+                select_files=partial(select_files, task_only=clip_mode=="event"),
+            )
+            .decode()
+            .map(partial(extract_sample,gsr=gsr))
+            .compose(clipping)
+            .shuffle(buffer_size)
+            .map_tuple(partial(to_tensor_gsrFalse, mask=load_nsd_flat_mask()))
+        )
     return dataset
 
 
@@ -230,14 +265,17 @@ def load_hcp_flat_mask() -> torch.Tensor:
 
 # ALL #
 import re
-def select_files(fname: str, *, task_only: bool = False, sub=None):
+def select_files(fname: str, *, 
+                 task_only: bool = False,
+                 sub=None, run=None):
     # Define the file suffixes to keep
     suffix = ".".join(fname.split(".")[1:])
     keep = suffix in {"bold.npy", "meta.json", "events.json", "misc.npz"}
 
-    # Check if the filename contains 'run-02' to 'run-12' but not 'run-01' or 'run-14' or 'run-13'
-    match = re.search(r"run-(0[2-9]|1[0-2])", fname)
-    keep = keep and bool(match)
+    if run is not None:
+        # Check if the filename contains 'run-02' to 'run-12' but not 'run-01' or 'run-14' or 'run-13'
+        match = re.search(r"run-(0[2-9]|1[0-2])", fname)
+        keep = keep and bool(match)
 
     # Additional filtering based on task_only and sub
     if task_only:
@@ -248,23 +286,44 @@ def select_files(fname: str, *, task_only: bool = False, sub=None):
     return keep
 
 
-def extract_sample(sample: Dict[str, Any]):
+def extract_sample(sample: Dict[str, Any], gsr=True):
     key = sample["__key__"]
     img = sample["bold.npy"]
     meta = sample["meta.json"]
     meta = {"key": key, **meta}
-    
-    # try:
     events = sample["events.json"]
     misc = sample["misc.npz"]
+    
+    if not gsr:
+        mean = misc["mean"]
+        std = misc["std"]
+        beta = misc["beta"]
+        global_signal = misc["global_signal"]
+        offset = misc["offset"]
+        
+        img = img / 255.0
+        img = (img - 0.5) / 0.2
+
+        img = mean + std * img
+        img = img + global_signal[:, None] * beta + offset
+
+        session_mean = img.mean(axis=0)
+        session_std = img.std(axis=0)
+
+        img = (img - session_mean[None]) / session_std[None]
+
     return img, meta, events, misc
-    # except:
-    #     return img, meta
 
 
 def to_tensor(img: np.ndarray, mask: torch.Tensor):
     img = torch.from_numpy(img) / 255.0
     img = (img - 0.5) / 0.2
+    img = unmask(img, mask)
+    img = img.unsqueeze(0)  # (C, T, H, W)
+    return img
+
+def to_tensor_gsrFalse(img: np.ndarray, mask: torch.Tensor):
+    img = torch.from_numpy(img)
     img = unmask(img, mask)
     img = img.unsqueeze(0)  # (C, T, H, W)
     return img

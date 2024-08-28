@@ -1,5 +1,5 @@
-model_name: "hcpflat_large_gsr"
-datasets_to_include: "NSD"
+model_name: "hcpflat_large_gsrTrue"
+datasets_to_include: "HCP"
 hcp_flat_path: "/weka/proj-medarc/shared/HCP-Flat"
 nsd_flat_path: "/weka/proj-medarc/shared/NSD-Flat"
 

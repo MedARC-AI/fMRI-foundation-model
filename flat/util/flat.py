@@ -325,7 +325,7 @@ def to_tensor(img: np.ndarray, mask: torch.Tensor):
 def to_tensor_gsrFalse(img: np.ndarray, mask: torch.Tensor):
     img = torch.from_numpy(img)
     img = unmask(img, mask)
-    img = img.unsqueeze(0)  # (C, T, H, W)
+    img = img.unsqueeze(0).float()  # (C, T, H, W)
     return img
 
 

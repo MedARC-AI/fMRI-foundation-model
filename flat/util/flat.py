@@ -13,7 +13,7 @@ import webdataset as wds
 from torch.utils.data import IterableDataset
 
 HCP_FLAT_ROOT = "https://huggingface.co/datasets/bold-ai/HCP-Flat/resolve/main"
-NUM_SHARDS = {"train": 1629, "test": 174}
+HCP_NUM_SHARDS = 1803
 NSD_NUM_SHARDS = 300
 FRAME_SIZE_BYTES = 29859
 
@@ -66,7 +66,7 @@ def create_nsd_flat(
     """
     urls = get_nsd_flat_urls(root, shards)
 
-    clipping = nsd_seq_clips(frames)
+    clipping = seq_clips(frames)
 
     if shuffle:
         buffer_size = int(buffer_size_mb * 1024 * 1024 / (frames * FRAME_SIZE_BYTES))
@@ -129,7 +129,6 @@ def load_nsd_flat_mask() -> torch.Tensor:
 
 def create_hcp_flat(
     root: Optional[str] = None,
-    split: Literal["train", "test"] = "train",
     shards: Optional[Union[int, Iterable[int]]] = None,
     clip_mode: Literal["seq", "event"] = "seq",
     frames: int = 16,
@@ -147,7 +146,7 @@ def create_hcp_flat(
         https://github.com/huggingface/pytorch-image-models/blob/main/timm/data/readers/reader_wds.py
     """
     root = root or os.environ.get("HCP_FLAT_ROOT") or HCP_FLAT_ROOT
-    urls = get_hcp_flat_urls(root, split, shards)
+    urls = get_hcp_flat_urls(root, shards)
 
     if shuffle:
         buffer_size = int(buffer_size_mb * 1024 * 1024 / (frames * FRAME_SIZE_BYTES))
@@ -190,7 +189,7 @@ def create_hcp_flat(
             .map(partial(extract_sample,gsr=gsr))
             .compose(clipping)
             .shuffle(buffer_size)
-            .map_tuple(partial(to_tensor, mask=load_nsd_flat_mask()))
+            .map_tuple(partial(to_tensor, mask=load_hcp_flat_mask()))
         )
     else:
         dataset = (
@@ -205,26 +204,25 @@ def create_hcp_flat(
             .map(partial(extract_sample,gsr=gsr))
             .compose(clipping)
             .shuffle(buffer_size)
-            .map_tuple(partial(to_tensor_gsrFalse, mask=load_nsd_flat_mask()))
+            .map_tuple(partial(to_tensor_gsrFalse, mask=load_hcp_flat_mask()))
         )
     return dataset
 
 
 def get_hcp_flat_urls(
     root: Optional[str] = None,
-    split: Literal["train", "test"] = "train",
     shards: Optional[Union[int, Iterable[int]]] = None,
 ):
     root = root or os.environ.get("HCP_FLAT_ROOT") or HCP_FLAT_ROOT
 
-    shards = shards or NUM_SHARDS[split]
+    shards = shards or HCP_NUM_SHARDS
     if isinstance(shards, int):
         shards = range(shards)
     assert (
-        min(shards) >= 0 and max(shards) < NUM_SHARDS[split]
-    ), f"Invalid shards {shards}; expected in [0, {NUM_SHARDS[split]})"
+        min(shards) >= 0 and max(shards) < HCP_NUM_SHARDS
+    ), f"Invalid shards {shards}; expected in [0, {HCP_NUM_SHARDS})"
 
-    urls = [f"{root}/{split}/hcp-flat_{split}_{shard:06d}.tar" for shard in shards]
+    urls = [f"{root}/tars/hcp-flat_{shard:06d}.tar" for shard in shards]
     return urls
 
 def event_clips(
@@ -360,20 +358,7 @@ def batch_unmask(img: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
 
     return unmasked
 
-
-def hcp_seq_clips(frames: int = 16):
-    def _filter(src: IterableDataset[Tuple[np.ndarray, Dict[str, Any]]]):
-        for img, meta in src:
-            offset = random.randint(0, frames)
-            for start in range(offset, len(img) - frames, frames):
-                # copy to avoid a memory leak due to storing the entire underlying array
-                # https://github.com/webdataset/webdataset/issues/354
-                clip = img[start : start + frames].copy()
-                meta = {**meta, "start": start}
-                yield clip, meta
-    return _filter
-
-def nsd_seq_clips(frames: int = 16):
+def seq_clips(frames: int = 16):
     def _filter(src: IterableDataset[Tuple[np.ndarray, Dict[str, Any]]]):
         for img, meta, events, meanstd in src:
             offsets = np.arange(frames)
@@ -383,8 +368,5 @@ def nsd_seq_clips(frames: int = 16):
                     # https://github.com/webdataset/webdataset/issues/354
                     clip = img[start : start + frames].copy()
                     meta = {**meta, "start": start}
-                    # if start==0:
                     yield clip, meta, events, meanstd['mean'], meanstd['std']
-                    # else:
-                        # yield clip, meta, None, meanstd['mean'], meanstd['std']
     return _filter

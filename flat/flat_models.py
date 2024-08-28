@@ -18,7 +18,6 @@ import torch.nn as nn
 from einops import rearrange
 from util import video_vit
 from util.logging import master_print as print
-from util.hcp_flat import load_hcp_flat_mask
 import copy
 
 
@@ -733,7 +732,6 @@ def mae_vit_small_fmri(num_heads=6,**kwargs):
         num_heads=num_heads, 
         mlp_ratio=4,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
-        img_mask=load_hcp_flat_mask(),
         **kwargs,
     )
     return model
@@ -748,7 +746,6 @@ def mae_vit_base_fmri(**kwargs):
         num_heads=12,
         mlp_ratio=4,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
-        img_mask=load_hcp_flat_mask(),
         **kwargs,
     )
     return model
@@ -763,7 +760,6 @@ def mae_vit_large_fmri(**kwargs):
         num_heads=16,
         mlp_ratio=4,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
-        img_mask=load_hcp_flat_mask(),
         **kwargs,
     )
     return model
@@ -778,7 +774,6 @@ def mae_vit_huge_fmri(**kwargs):
         num_heads=16,
         mlp_ratio=4,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
-        img_mask=load_hcp_flat_mask(),
         **kwargs,
     )
     return model

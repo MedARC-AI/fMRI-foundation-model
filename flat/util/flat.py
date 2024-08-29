@@ -271,8 +271,8 @@ def select_files(fname: str, *,
     keep = suffix in {"bold.npy", "meta.json", "events.json", "misc.npz"}
 
     if run is not None:
-        # Check if the filename contains 'run-02' to 'run-12' but not 'run-01' or 'run-14' or 'run-13'
-        match = re.search(r"run-(0[2-9]|1[0-2])", fname)
+        # Check if the filename contains 'run-02' to 'run-12' but not 'run-01' or 'run-14'
+        match = re.search(r"run-(0[2-9]|1[0-3])", fname)
         keep = keep and bool(match)
 
     # Additional filtering based on task_only and sub

@@ -19,6 +19,7 @@ from collections import defaultdict, deque, OrderedDict
 from typing import Literal
 
 import util.logging as logging
+import numpy as np
 import psutil
 import torch
 import torch.distributed as dist
@@ -27,6 +28,7 @@ from iopath.common.file_io import g_pathmgr as pathmgr
 from util.logging import master_print as print
 from torch import inf
 
+EPS = np.finfo(np.float32).eps
 
 logger = logging.get_logger(__name__)
 
@@ -538,3 +540,26 @@ def group_reduce(
     x = one_hot.t() @ x
     x = x.reshape((x.size(0), *shape[1:]))
     return group_ids, x
+
+
+def zscore(data: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    zscore data along the first axis.
+    """
+    mean = np.mean(data, axis=0)
+    std = np.std(data, axis=0)
+    bad_mask = std < EPS
+    data = (data - mean) / std.clip(min=EPS)
+    if np.any(bad_mask):
+        data[:, bad_mask] = 0.0
+    return data, mean, std
+
+
+def quantize(data: np.ndarray, vmin: float = -2.5, vmax: float = 2.5) -> np.ndarray:
+    """
+    Quantize continuous data with standard normal data to uint8.
+    """
+    data = np.clip(data, vmin, vmax)
+    data = (data - vmin) / (vmax - vmin)
+    data = (255 * data).astype(dtype="uint8")
+    return data

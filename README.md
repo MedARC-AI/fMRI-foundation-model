@@ -24,7 +24,7 @@ In-progress -- this repo is under active development in the MedARC discord serve
 - prep_mindeye_downstream.ipynb
 - prep_HCP_downstream.ipynb
 
-### 3. Evaluate downstream performanced using the saved latents
+### 3. Evaluate downstream performance using the saved latents
 
 - mindeye_downstream.ipynb
 - HCP_downstream.ipynb

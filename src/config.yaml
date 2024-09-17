@@ -1,0 +1,47 @@
+model_name: "NSDflat_large_gsrFalse_contr_"
+datasets_to_include: "NSD" # ["NSD", "HCP", "BOTH"]
+hcp_flat_path: "/weka/proj-medarc/shared/HCP-Flat"
+nsd_flat_path: "/weka/proj-medarc/shared/NSD-Flat"
+
+gsr: False
+
+use_contrastive_loss: True
+patch_size: 16
+pct_masks_to_decode: 1
+decoder_embed_dim: 512
+num_frames: 16
+mask_ratio: .75
+pred_t_dim: 8
+t_patch_size: 2
+cls_embed: True
+no_qkv_bias: False
+sep_pos_embed: True
+trunc_init: False
+norm_pix_loss: False
+contrastive_loss_weight: 1.0  # 2.0
+
+# Training Configs
+batch_size: 32 
+num_workers: 10
+num_epochs: 100
+seed: 42
+base_lr: 1.0e-3 # Keep the x.0 else will be converted to string
+num_samples_per_epoch: 200000
+test_num_samples_per_epoch: 50000
+grad_clip: 1.0  # set 0 for no clip
+grad_accumulation_steps: 1
+test_set: False
+plotting: True
+
+# Downstream probe config
+probe_num_samples_per_epoch: 100000
+probe_num_epochs: 30
+probe_batch_size: 8
+probe_base_lr: 3.0e-4
+
+# Saving progress
+ckpt_saving: True
+ckpt_interval: 10 # in epochs
+print_interval: 20 # in steps
+resume_from_ckpt: True
+wandb_log: True

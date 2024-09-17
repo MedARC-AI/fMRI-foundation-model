@@ -2,31 +2,29 @@
 
 In-progress -- this repo is under active development in the MedARC discord server. https://medarc.ai/fmri
 
-1. Download contents of https://huggingface.co/datasets/pscotti/nsdfoundation. You will need to specify the path to this folder in the code.
+## Installation
 
-```
-from huggingface_hub import snapshot_download
-snapshot_download(repo_id="pscotti/nsdfoundation", repo_type = "dataset", revision="main", cache_dir = "./cache" ,
-    local_dir= "your_local_dir", local_dir_use_symlinks = False, resume_download = True)
-```
+- Run setup.sh to create a new "foundation_env" virtual environment
 
-2. Run setup.sh to create a new "found" virtual environment
+- Activate the virtual environment with "source foundation_env/bin/activate"
 
-3. Activate the virtual environment with "source found/bin/activate"
+## Datasets
 
-**There are 3 different approaches being explored simultaneously: VideoMAE, VideoMAE (w/ Mamba blocks instead of ViT), and VJEPA**
+- https://huggingface.co/datasets/bold-ai/HCP-Flat
+- https://huggingface.co/datasets/bold-ai/NSD-Flat
 
-## VideoMAE-Mamba additional installation instructions
+## Usage
 
-Install causal_conv1d and mamba from VideoMamba 
-```
-git clone https://github.com/OpenGVLab/VideoMamba.git
-cd VideoMamba
-```
-Install causal_conv1d and mamba 
-```
-pip install -r requirements.txt
-pip install -e causal-conv1d
-pip install -e mamba
-```
-We don't actually need VideoMamba so you can delete that repo once you've installed causal_conv1d and mamba 
+### 1. Train MAE
+
+- main.ipynb (use accel.slurm to allocate multi-gpu Slurm job)
+
+### 2. Save latents to hdf5 / parquet
+
+- prep_mindeye_downstream.ipynb
+- prep_HCP_downstream.ipynb
+
+### 3. Evaluate downstream performanced using the saved latents
+
+- mindeye_downstream.ipynb
+- HCP_downstream.ipynb

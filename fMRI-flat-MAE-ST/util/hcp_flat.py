@@ -53,7 +53,7 @@ def create_hcp_flat(
     if shuffle:
         # Nb, after undoing gsr the data are float32 rather than uint8, to avoid more
         # precision loss
-        dtype_size_bytes = 32 if not gsr else 8
+        dtype_size_bytes = 4 if not gsr else 1
         buffer_size_bytes = buffer_size * frames * MASK_SIZE * dtype_size_bytes
         print(f"Shuffle buffer size (MB): {buffer_size_bytes / 1024 / 1024:.0f}")
 

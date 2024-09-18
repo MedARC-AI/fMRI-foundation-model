@@ -11,8 +11,10 @@
 # --------------------------------------------------------
 
 from functools import partial
+from pathlib import Path
 from typing import Literal
 
+import numpy as np
 import torch
 import torch.nn as nn
 from einops import rearrange
@@ -21,6 +23,8 @@ from util.logging import master_print as print
 from util.hcp_flat import load_hcp_flat_mask
 
 from util.video_vit import Block, PatchEmbed
+
+ROOT = Path(__file__).parent
 
 
 class VisionTransformer(nn.Module):
@@ -380,3 +384,9 @@ def vit_huge_patch16_fmri(**kwargs):
         **kwargs,
     )
     return model
+
+
+def load_hcp_flat_mask() -> torch.Tensor:
+    mask = np.load(ROOT / "hcp-flat_mask.npy")
+    mask = torch.as_tensor(mask)
+    return mask

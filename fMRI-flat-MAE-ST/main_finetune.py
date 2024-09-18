@@ -30,6 +30,7 @@ from iopath.common.file_io import g_pathmgr as pathmgr
 from torch.utils.data import default_collate
 from engine_finetune import evaluate, train_one_epoch
 from util.hcp_flat import create_hcp_flat
+from util.nsd_flat import create_nsd_flat
 
 from util.logging import master_print as print
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
@@ -45,14 +46,24 @@ except ImportError:
     has_wandb = False
 
 PROJECT = "fMRI-foundation-model"
-NUM_CLASSES = {"task": 14, "trial_type": 21}
-CLIP_MODES = {"task": "seq", "trial_type": "event"}
+NUM_CLASSES = {"task": 14, "trial_type": 21, "cluster": 41}
+CLIP_MODES = {"task": "seq", "trial_type": "event", "cluster": "event"}
+SHARDS = {
+    "hcp_flat": {
+        "train": range(0, 1803),    # sub list "train"
+        "val": range(0, 1080),      # sub list "test"
+        "test": range(1080, 1803),  # sub list "test"
+    },
+    "nsd_flat": {
+        "train": range(0, 250),
+        "val": range(250, 280),
+        "test": range(280, 300),
+    },
+}
 
 
 def get_args_parser():
-    parser = argparse.ArgumentParser(
-        "MAE fMRI fine-tuning for task/state classification", add_help=False
-    )
+    parser = argparse.ArgumentParser("MAE fMRI fine-tuning", add_help=False)
     parser.add_argument(
         "--batch_size",
         default=64,
@@ -158,16 +169,27 @@ def get_args_parser():
         help="global pool mode"
     )
     parser.add_argument(
+        "--dataset",
+        default="hcp_flat",
+        choices=["hcp_flat", "nsd_flat"],
+        help="training dataset",
+    )
+    parser.add_argument(
         "--target",
         default="trial_type",
-        choices=["task", "trial_type"],
+        choices=["task", "trial_type", "cluster"],
         help="classification target",
+    )
+    parser.add_argument(
+        "--gsr",
+        action="store_true",
+        help="use gsr data",
     )
     parser.add_argument(
         "--path_to_data_dir",
         type=str,
         default=None,
-        help="local path for HCP-Flat data",
+        help="local path for data",
     )
     parser.add_argument(
         "--num_train_samples",
@@ -265,14 +287,49 @@ def main(args):
 
     cudnn.benchmark = True
 
-    dataset_train = create_hcp_flat(
-        root=args.path_to_data_dir,
-        split="train",
-        clip_mode=CLIP_MODES[args.target],
-        target=args.target,
-        frames=args.num_frames,
-        shuffle=True,
-    )
+    if args.dataset == "hcp_flat":
+        dataset_train = create_hcp_flat(
+            root=args.path_to_data_dir,
+            shards=SHARDS["hcp_flat"]["train"],
+            sub_list="train",
+            clip_mode=CLIP_MODES[args.target],
+            target=args.target,
+            frames=args.num_frames,
+            gsr=args.gsr,
+            shuffle=True,
+        )
+        dataset_val = create_hcp_flat(
+            root=args.path_to_data_dir,
+            shards=SHARDS["hcp_flat"]["val"],
+            sub_list="test",
+            clip_mode=CLIP_MODES[args.target],
+            target=args.target,
+            frames=args.num_frames,
+            gsr=args.gsr,
+            shuffle=False,
+        )
+    elif args.dataset == "nsd_flat":
+        dataset_train = create_nsd_flat(
+            root=args.path_to_data_dir,
+            shards=SHARDS["nsd_flat"]["train"],
+            clip_mode=CLIP_MODES[args.target],
+            target=args.target,
+            frames=args.num_frames,
+            gsr=args.gsr,
+            shuffle=True,
+        )
+        dataset_val = create_nsd_flat(
+            root=args.path_to_data_dir,
+            shards=SHARDS["nsd_flat"]["val"],
+            clip_mode=CLIP_MODES[args.target],
+            target=args.target,
+            frames=args.num_frames,
+            gsr=args.gsr,
+            shuffle=False,
+        )
+    else:
+        raise ValueError(f"Invalid dataseet {args.dataset}")
+
     data_loader_train = wds.WebLoader(
         dataset_train.batched(
             args.batch_size, collation_fn=default_collate, partial=False
@@ -287,15 +344,6 @@ def main(args):
     )
     data_loader_train = data_loader_train.with_epoch(num_train_batches)
 
-    dataset_val = create_hcp_flat(
-        root=args.path_to_data_dir,
-        split="test",
-        shards=range(87),  # first half of shards used as val
-        clip_mode=CLIP_MODES[args.target],
-        target=args.target,
-        frames=args.num_frames,
-        shuffle=False,
-    )
     data_loader_val = wds.WebLoader(
         dataset_val.batched(
             args.batch_size, collation_fn=default_collate, partial=False
@@ -313,7 +361,7 @@ def main(args):
     if global_rank == 0 and args.output_dir:
         if args.name:
             args.output_dir = f"{args.output_dir}/{args.name}"
-        Path(args.output_dir).mkdir(parents=True)
+        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
 
     model = models_vit.__dict__[args.model](
         num_classes=NUM_CLASSES[args.target],

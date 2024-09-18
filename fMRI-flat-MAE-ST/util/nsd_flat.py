@@ -50,7 +50,7 @@ def create_nsd_flat(
     if shuffle:
         # Nb, after undoing gsr the data are float32 rather than uint8, to avoid more
         # precision loss
-        dtype_size_bytes = 32 if not gsr else 8
+        dtype_size_bytes = 4 if not gsr else 1
         buffer_size_bytes = buffer_size * frames * MASK_SIZE * dtype_size_bytes
         print(f"Shuffle buffer size (MB): {buffer_size_bytes / 1024 / 1024:.0f}")
 
@@ -255,7 +255,8 @@ def with_targets(class_id_map: np.ndarray):
     def _filter(src: IterableDataset[Dict[str, Any]]):
         for sample in src:
             nsd_id = sample["meta"]["nsd_id"]
-            target = class_id_map[nsd_id]
+            assert 0 < nsd_id <= 73000
+            target = class_id_map[nsd_id - 1]
             yield {**sample, "target": target}
     return _filter
 

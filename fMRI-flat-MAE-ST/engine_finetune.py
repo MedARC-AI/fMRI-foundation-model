@@ -57,11 +57,12 @@ def train_one_epoch(
 
     optimizer.zero_grad()
 
-    for data_iter_step, (samples, targets) in enumerate(
+    for data_iter_step, batch in enumerate(
         metric_logger.log_every(
             data_loader, print_freq, header, total_steps=num_batches
         )
     ):
+        samples, targets = batch["image"], batch["target"]
 
         # we use a per iteration (instead of per epoch) lr scheduler
         if data_iter_step % accum_iter == 0:
@@ -150,9 +151,10 @@ def evaluate(
     if num_batches is None:
         num_batches = len(data_loader)
 
-    for images, target in metric_logger.log_every(
+    for batch in metric_logger.log_every(
         data_loader, 10, header, total_steps=num_batches
     ):
+        images, target = batch["image"], batch["target"]
         images = images.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
 

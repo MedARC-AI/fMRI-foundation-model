@@ -266,7 +266,7 @@ class MaskedAutoencoderViT(nn.Module):
             self.register_buffer("img_mask_patches2", None)
             self.register_buffer("patch_mask2", None)
             self.register_buffer("patch_mask_indices2", None)
-            self.n_mask_patches = None
+            self.n_mask_patches2 = None
 
     def patchify(self, imgs):
         """
@@ -663,76 +663,78 @@ class MaskedAutoencoderViT(nn.Module):
         loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
         return loss
 
-    def forward(self, imgs, mask_ratio=0.75, use_contrastive_loss=False):
-        latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio, use_contrastive_loss=use_contrastive_loss)
-        if not use_contrastive_loss:
-            pred = self.forward_decoder(latent, ids_restore, use_contrastive_loss=use_contrastive_loss)  # [N, L, p*p*C]
-            loss = self.forward_loss(imgs, pred, mask)
-            return loss, pred, mask, latent
-        else:
-            latent1, latent2 = latent
-            mask1, mask2 = mask
-            true_mask = copy.deepcopy(mask1)
-            true_mask[mask2==0]=0 # dont try to predict the masks that were fed to the other encoder
-            pred1 = self.forward_decoder(latent1, ids_restore, use_contrastive_loss=use_contrastive_loss)  # [N, L, p*p*C]
-            pred2 = self.forward_decoder(latent2, ids_restore, use_contrastive_loss=use_contrastive_loss)  # [N, L, p*p*C]
-            loss1 = self.forward_loss(imgs, pred1, true_mask)
-            loss2 = self.forward_loss(imgs, pred2, true_mask)
-            loss3 = self.forward_cyclic_loss(pred1, pred2, true_mask)
-            return loss1, loss2, loss3, pred1, pred2, mask1, mask2, true_mask, latent1, latent2
+    def forward(self, imgs, mask_ratio=0.75, use_contrastive_loss=False, forward_features=True, global_pool=True, cls_forward=False):
+        if forward_features:
+            # embed patches
+            x = self.patch_embed(imgs)
+            N, T, L, C = x.shape  # T: temporal; L: spatial
     
-    def forward_features(self, x, global_pool=True):
-        # embed patches
-        x = self.patch_embed(x)
-        N, T, L, C = x.shape  # T: temporal; L: spatial
-
-        x = x.view([N, T * L, C])
-
-        # append cls token
-        if self.cls_embed:
-            cls_token = self.cls_token
-            cls_tokens = cls_token.expand(x.shape[0], -1, -1)
-            x = torch.cat((cls_tokens, x), dim=1)
-
-        if self.sep_pos_embed:
-            pos_embed = self.pos_embed_spatial.repeat(
-                1, self.input_size[0], 1
-            ) + torch.repeat_interleave(
-                self.pos_embed_temporal,
-                self.input_size[1] * self.input_size[2],
-                dim=1,
-            )
+            x = x.view([N, T * L, C])
+    
+            # append cls token
             if self.cls_embed:
-                pos_embed = torch.cat(
-                    [
-                        self.pos_embed_class.expand(pos_embed.shape[0], -1, -1),
-                        pos_embed,
-                    ],
-                    1,
-                )
-        else:
-            pos_embed = self.pos_embed[:, :, :]
-        x = x + pos_embed
-
-        # drop patches outside image mask
-        if self.img_mask is not None:
-            if self.cls_embed:
-                cls_tokens, x = x[:, :1, :], x[:, 1:, :]
-            x = x.view([N, T, L, C])
-            x = x[:, :, self.patch_mask_indices]
-            x = x.view([N, T * self.n_mask_patches, C])
-            if self.cls_embed:
+                cls_token = self.cls_token
+                cls_tokens = cls_token.expand(x.shape[0], -1, -1)
                 x = torch.cat((cls_tokens, x), dim=1)
-
-        # apply Transformer blocks
-        for blk in self.blocks:
-            x = blk(x)
-
-        if global_pool:
-            if self.cls_embed:
-                x = x[:, 1:, :]
-            x = x.mean(dim=1)
-        return x
+    
+            if self.sep_pos_embed:
+                pos_embed = self.pos_embed_spatial.repeat(
+                    1, self.input_size[0], 1
+                ) + torch.repeat_interleave(
+                    self.pos_embed_temporal,
+                    self.input_size[1] * self.input_size[2],
+                    dim=1,
+                )
+                if self.cls_embed:
+                    pos_embed = torch.cat(
+                        [
+                            self.pos_embed_class.expand(pos_embed.shape[0], -1, -1),
+                            pos_embed,
+                        ],
+                        1,
+                    )
+            else:
+                pos_embed = self.pos_embed[:, :, :]
+            x = x + pos_embed
+    
+            # drop patches outside image mask
+            if self.img_mask is not None:
+                if self.cls_embed:
+                    cls_tokens, x = x[:, :1, :], x[:, 1:, :]
+                x = x.view([N, T, L, C])
+                x = x[:, :, self.patch_mask_indices]
+                x = x.view([N, T * self.n_mask_patches, C])
+                if self.cls_embed:
+                    x = torch.cat((cls_tokens, x), dim=1)
+    
+            # apply Transformer blocks
+            for blk in self.blocks:
+                x = blk(x)
+    
+            if global_pool:
+                if self.cls_embed:
+                    x = x[:, 1:, :]
+                x = x.mean(dim=1)
+            elif cls_forward:
+                x = x[:, :1, :]
+            return x
+        else:
+            latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio, use_contrastive_loss=use_contrastive_loss)
+            if not use_contrastive_loss:
+                pred = self.forward_decoder(latent, ids_restore, use_contrastive_loss=use_contrastive_loss)  # [N, L, p*p*C]
+                loss = self.forward_loss(imgs, pred, mask)
+                return loss, pred, mask, latent
+            else:
+                latent1, latent2 = latent
+                mask1, mask2 = mask
+                true_mask = copy.deepcopy(mask1)
+                true_mask[mask2==0]=0 # dont try to predict the masks that were fed to the other encoder
+                pred1 = self.forward_decoder(latent1, ids_restore, use_contrastive_loss=use_contrastive_loss)  # [N, L, p*p*C]
+                pred2 = self.forward_decoder(latent2, ids_restore, use_contrastive_loss=use_contrastive_loss)  # [N, L, p*p*C]
+                loss1 = self.forward_loss(imgs, pred1, true_mask)
+                loss2 = self.forward_loss(imgs, pred2, true_mask)
+                loss3 = self.forward_cyclic_loss(pred1, pred2, true_mask)
+                return loss1, loss2, loss3, pred1, pred2, mask1, mask2, true_mask, latent1, latent2
 
     def forward_head(self, x):
         # classifier
@@ -757,13 +759,13 @@ class MaskedAutoencoderViT(nn.Module):
         return x
 
 
-def mae_vit_small_fmri(num_heads=6,**kwargs):
+def mae_vit_small_fmri(**kwargs):
     model = MaskedAutoencoderViT(
         img_size=(144, 320),
         in_chans=1,
         embed_dim=384, 
         depth=12, 
-        num_heads=num_heads, 
+        num_heads=6, 
         mlp_ratio=4,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
         **kwargs,

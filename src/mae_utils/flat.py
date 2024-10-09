@@ -12,6 +12,8 @@ import torch
 import webdataset as wds
 from torch.utils.data import IterableDataset
 
+shared1000 = np.where(np.load("/weka/proj-medarc/shared/mindeyev2_dataset/shared1000.npy"))[0]
+
 HCP_FLAT_ROOT = "https://huggingface.co/datasets/bold-ai/HCP-Flat/resolve/main"
 HCP_NUM_SHARDS = 1803
 NSD_NUM_SHARDS = 300
@@ -59,6 +61,9 @@ def create_nsd_flat(
     gsr: Optional[bool] = True,
     sub: Optional[str] = None,
     run: Optional[str] = None,
+    mindeye_only: Optional[bool] = False,
+    only_shared1000: Optional[bool] = False,
+    mindeye_TR_delay: int = 3,
 ) -> wds.WebDataset:
     """
     Create NSD-Flat dataset. Yields samples of (key, images) where key is the webdataset
@@ -66,7 +71,7 @@ def create_nsd_flat(
     """
     urls = get_nsd_flat_urls(root, shards)
 
-    clipping = seq_clips(frames)
+    clipping = seq_clips(frames, mindeye_only=mindeye_only, only_shared1000=only_shared1000, mindeye_TR_delay=mindeye_TR_delay)
 
     if shuffle:
         buffer_size = int(buffer_size_mb * 1024 * 1024 / (frames * FRAME_SIZE_BYTES))
@@ -369,15 +374,36 @@ def batch_unmask(img: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
 
     return unmasked
 
-def seq_clips(frames: int = 16):
+def seq_clips(frames: int = 16, mindeye_only=False, mindeye_TR_delay=3, only_shared1000=False):
     def _filter(src: IterableDataset[Tuple[np.ndarray, Dict[str, Any]]]):
-        for img, meta, events, meanstd in src:
-            offsets = np.arange(frames)
-            for offset in offsets:
-                for start in range(offset, len(img) - frames, frames):
-                    # copy to avoid a memory leak due to storing the entire underlying array
-                    # https://github.com/webdataset/webdataset/issues/354
-                    clip = img[start : start + frames].copy()
-                    meta = {**meta, "start": start}
-                    yield clip, meta, events, meanstd['mean'], meanstd['std']
+        for ii, (img, meta, events, meanstd) in enumerate(src):
+            if mindeye_only:
+                if meta['sub']!=1:
+                    continue
+                group = [(s['index'], s['nsd_id']) for s in events]
+                mindeye_info = np.array(group)
+                if len(mindeye_info)==0:
+                    continue
+                image_onsets, image_nsd_id = mindeye_info[:,0], mindeye_info[:,1]
+                for istart, start in enumerate(image_onsets + mindeye_TR_delay):
+                    nsd_id = image_nsd_id[istart].item() - 1 # because nsd_id is 1-indexed
+                    if only_shared1000:
+                        if nsd_id in shared1000:
+                            clip = img[start : start + frames].copy()
+                            meta = {**meta, "start": start}
+                            yield clip, meta, nsd_id, meanstd['mean'], meanstd['std']
+                    else:
+                        if not (nsd_id in shared1000):
+                            clip = img[start : start + frames].copy()
+                            meta = {**meta, "start": start}
+                            yield clip, meta, nsd_id, meanstd['mean'], meanstd['std']
+            else:
+                offsets = np.arange(frames)
+                for offset in offsets:
+                    for start in range(offset, len(img) - frames, frames):
+                        # copy to avoid a memory leak due to storing the entire underlying array
+                        # https://github.com/webdataset/webdataset/issues/354
+                        clip = img[start : start + frames].copy()
+                        meta = {**meta, "start": start}
+                        yield clip, meta, events, meanstd['mean'], meanstd['std']
     return _filter

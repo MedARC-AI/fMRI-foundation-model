@@ -1,11 +1,14 @@
-model_name: "NSDflat_large_gsrFalse_contr_"
+model_name: "NSDflat_large_gsrFalse_"
 datasets_to_include: "NSD" # ["NSD", "HCP", "BOTH"]
 hcp_flat_path: "/weka/proj-medarc/shared/HCP-Flat"
 nsd_flat_path: "/weka/proj-medarc/shared/NSD-Flat"
 
-gsr: False
+model_size: "large"
+global_pool: False
+cls_forward: True
 
-use_contrastive_loss: True
+gsr: False
+use_contrastive_loss: False
 patch_size: 16
 pct_masks_to_decode: 1
 decoder_embed_dim: 512
@@ -18,14 +21,14 @@ no_qkv_bias: False
 sep_pos_embed: True
 trunc_init: False
 norm_pix_loss: False
-contrastive_loss_weight: 1.0  # 2.0
+contrastive_loss_weight: 1.0
 
 # Training Configs
-batch_size: 32 
+batch_size: 24 
 num_workers: 10
-num_epochs: 100
+num_epochs: 100 # 100 for MAE pretraining, can use less for downstream
 seed: 42
-base_lr: 1.0e-3 # Keep the x.0 else will be converted to string
+base_lr: 3.0e-4 #1.0e-3 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 200000
 test_num_samples_per_epoch: 50000
 grad_clip: 1.0  # set 0 for no clip
@@ -41,7 +44,8 @@ probe_base_lr: 3.0e-4
 
 # Saving progress
 ckpt_saving: True
-ckpt_interval: 10 # in epochs
+ckpt_interval: 25 # in epochs
 print_interval: 20 # in steps
 resume_from_ckpt: True
 wandb_log: True
+wandb_rand: 0 # 0 means set to random; if resuming a wandb run check what its wandb_rand was and change it here

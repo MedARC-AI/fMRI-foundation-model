@@ -378,7 +378,7 @@ def seq_clips(frames: int = 16, mindeye_only=False, mindeye_TR_delay=3, only_sha
     def _filter(src: IterableDataset[Tuple[np.ndarray, Dict[str, Any]]]):
         for ii, (img, meta, events, meanstd) in enumerate(src):
             if mindeye_only:
-                if meta['sub']!=1:
+                if meta['sub']!=1: # forcing samples to come from only subj01
                     continue
                 group = [(s['index'], s['nsd_id']) for s in events]
                 mindeye_info = np.array(group)

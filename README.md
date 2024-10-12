@@ -33,4 +33,8 @@ Then evaluate downstream performance using the saved latents:
 
 ### 2b. Full fine-tuning of both MAE and downstream model
 
+This requires having access to train_subj01.hdf5 which is saved in "/weka/proj-fmri/paulscotti/fMRI-foundation-model/src".
+
+If you cannot access this file, the commented out code shows how to create this file yourself.
+
 - mindeye_finetuning.ipynb

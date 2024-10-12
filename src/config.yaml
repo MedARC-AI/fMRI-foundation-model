@@ -26,7 +26,7 @@ contrastive_loss_weight: 1.0
 # Training Configs
 batch_size: 24 
 num_workers: 10
-num_epochs: 15
+num_epochs: 100 # 100 for MAE pretraining, can use less for downstream
 seed: 42
 base_lr: 3.0e-4 #1.0e-3 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 200000

@@ -47,6 +47,7 @@ class MaskedAutoencoderViT(nn.Module):
         nsd_mask=None,
         hcp_mask=None,
         pct_masks_to_decode=1,
+        use_source_embeds=False,
         **kwargs,
     ):
         super().__init__()
@@ -56,7 +57,7 @@ class MaskedAutoencoderViT(nn.Module):
         self.pred_t_dim = pred_t_dim
         self.t_pred_patch_size = t_patch_size * pred_t_dim // num_frames
         self.embed_dim = embed_dim
-
+        self.use_source_embeds = use_source_embeds
         self.pct_masks_to_decode = pct_masks_to_decode
 
         self.patch_embed = patch_embed(
@@ -74,6 +75,9 @@ class MaskedAutoencoderViT(nn.Module):
         if self.cls_embed:
             self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
             self.decoder_cls_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
+
+        if self.use_source_embeds:
+            self.source_embeds = nn.Embedding(3, embed_dim)
 
         if sep_pos_embed:
             self.pos_embed_spatial = nn.Parameter(
@@ -360,12 +364,13 @@ class MaskedAutoencoderViT(nn.Module):
         else:
             return [x_masked1,x_masked2], [mask1,mask2], ids_restore, ids_keep
         
-    def forward_encoder(self, x, mask_ratio, use_contrastive_loss=False):
+    def forward_encoder(self, x, mask_ratio, use_contrastive_loss=False, source_ids=None):
         x = self.patch_embed(x)
         
         N, T, L, C = x.shape
 
         x = x.reshape(N, T * L, C)
+        
 
         # masking: length -> length * mask_ratio
         if not use_contrastive_loss:
@@ -375,6 +380,7 @@ class MaskedAutoencoderViT(nn.Module):
             [x1,x2], [mask1,mask2], ids_restore, ids_keep = self.random_masking(x, mask_ratio, use_contrastive_loss=use_contrastive_loss)
             x1 = x1.view(len(x1), -1, C)
             x2 = x2.view(len(x2), -1, C)
+        
         # append cls token
         if self.cls_embed:
             cls_token = self.cls_token
@@ -433,6 +439,24 @@ class MaskedAutoencoderViT(nn.Module):
             x1 = x1.view([len(x1), -1, C]) + pos_embed[:,:x1.shape[1]]
             x2 = x2.view([len(x2), -1, C]) + torch.cat((pos_embed[:,:1], pos_embed[:,x1.shape[1]:]),dim=1)
 
+        if source_ids is not None:
+            assert source_ids.ndim == 1, "source_ids should be a 1D tensor of source indices"
+            assert torch.all((source_ids >= 0) & (source_ids <= 2)), "All values in source_ids must be integers between 0 and 2"
+            source_embeds = self.source_embeds(source_ids)  # bs, embed_dim
+            # Use token order: [cls, source, patch]
+            if not use_contrastive_loss:
+                if self.cls_embed:
+                    x = torch.cat((x[:, :1], source_embeds[:, None], x[:, 1:]), dim=1)
+                else:
+                    x = torch.cat((source_embeds[:, None], x), dim=1)
+            else:
+                if self.cls_embed:
+                    x1 = torch.cat((x1[:, :1], source_embeds[:, None], x1[:, 1:]), dim=1)
+                    x2 = torch.cat((x2[:, :1], source_embeds[:, None], x2[:, 1:]), dim=1)
+                else:
+                    x1 = torch.cat((source_embeds[:, None], x1), dim=1)
+                    x2 = torch.cat((source_embeds[:, None], x2), dim=1)
+        
         if not use_contrastive_loss:
             # apply Transformer blocks
             for blk in self.blocks:
@@ -450,11 +474,18 @@ class MaskedAutoencoderViT(nn.Module):
             if self.cls_embed:
                 # remove cls token
                 x = x[:, 1:, :]
+            if source_ids is not None:
+                # remove source token
+                x = x[:, 1:, :]
 
             return x, mask, ids_restore
         else:
             if self.cls_embed:
                 # remove cls token
+                x1 = x1[:, 1:, :]
+                x2 = x2[:, 1:, :]
+            if source_ids is not None:
+                # remove source token
                 x1 = x1[:, 1:, :]
                 x2 = x2[:, 1:, :]
 
@@ -663,7 +694,7 @@ class MaskedAutoencoderViT(nn.Module):
         loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
         return loss
 
-    def forward(self, imgs, mask_ratio=0.75, use_contrastive_loss=False, forward_features=False, global_pool=True, cls_forward=False):
+    def forward(self, imgs, mask_ratio=0.75, use_contrastive_loss=False, forward_features=False, global_pool=True, cls_forward=False, source_ids=None):
         if forward_features:
             # embed patches
             x = self.patch_embed(imgs)
@@ -706,6 +737,16 @@ class MaskedAutoencoderViT(nn.Module):
                 x = x.view([N, T * self.n_mask_patches, C])
                 if self.cls_embed:
                     x = torch.cat((cls_tokens, x), dim=1)
+            
+            if source_ids is not None:
+                assert source_ids.ndim == 1, "source_ids should be a 1D tensor of source indices"
+                assert torch.all((source_ids >= 0) & (source_ids <= 2)), "All values in source_ids must be integers between 0 and 2"
+                source_embeds = self.source_embeds(source_ids)  # bs, embed_dim
+                # Use token order: [cls, source, patch]
+                if self.cls_embed:
+                    x = torch.cat((x[:, :1], source_embeds[:, None], x[:, 1:]), dim=1)
+                else:
+                    x = torch.cat((source_embeds[:, None], x), dim=1)
     
             # apply Transformer blocks
             for blk in self.blocks:
@@ -713,13 +754,17 @@ class MaskedAutoencoderViT(nn.Module):
     
             if global_pool:
                 if self.cls_embed:
+                    # remove cls token
+                    x = x[:, 1:, :]
+                if source_ids is not None:
+                    # remove source token
                     x = x[:, 1:, :]
                 x = x.mean(dim=1)
             elif cls_forward:
                 x = x[:, :1, :]
             return x
         else:
-            latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio, use_contrastive_loss=use_contrastive_loss)
+            latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio, use_contrastive_loss=use_contrastive_loss, source_ids=source_ids)
             if not use_contrastive_loss:
                 pred = self.forward_decoder(latent, ids_restore, use_contrastive_loss=use_contrastive_loss)  # [N, L, p*p*C]
                 loss = self.forward_loss(imgs, pred, mask)

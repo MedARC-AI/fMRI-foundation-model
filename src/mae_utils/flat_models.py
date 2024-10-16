@@ -483,8 +483,10 @@ class MaskedAutoencoderViT(nn.Module):
         else:
             if self.cls_embed:
                 # remove cls token
-                x1_cls = x1[:, 1:, :]
-                x2_cls = x2[:, 1:, :]
+                x1_cls = x1[:, :1, :]
+                x2_cls = x2[:, :1, :]
+                x1 = x1[:, 1:, :]
+                x2 = x2[:, 1:, :]
             else:
                 x1_cls = x2_cls = None
             if source_ids is not None:

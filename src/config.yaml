@@ -1,5 +1,5 @@
 model_name: "NSDflat_large_gsrFalse_"
-datasets_to_include: "HCP" # ["NSD", "HCP", "BOTH"]
+datasets_to_include: "BOTH" # ["NSD", "HCP", "BOTH"]
 hcp_flat_path: "/weka/proj-medarc/shared/HCP-Flat"
 nsd_flat_path: "/weka/proj-medarc/shared/NSD-Flat"
 
@@ -8,7 +8,7 @@ global_pool: False
 cls_forward: True
 
 gsr: False
-use_contrastive_loss: False
+use_contrastive_loss: True
 patch_size: 16
 pct_masks_to_decode: 1
 decoder_embed_dim: 512
@@ -25,7 +25,7 @@ contrastive_loss_weight: 1.0
 use_source_embeds: True
 
 # Training Configs
-batch_size: 24 
+batch_size: 12 
 num_workers: 10
 num_epochs: 100 # 100 for MAE pretraining, can use less for downstream
 seed: 42

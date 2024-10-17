@@ -16,17 +16,17 @@ import os
 import time
 from collections import defaultdict, deque, OrderedDict
 
-import util.logging as logging
+import mae_utils.logging as logging
 import psutil
 import torch
 import torch.distributed as dist
 from iopath.common.file_io import g_pathmgr as pathmgr
-from util.logging import master_print as print
+from mae_utils.logging import master_print as print
 from torch import inf
-
+import numpy as np
 
 logger = logging.get_logger(__name__)
-
+EPS = np.finfo(np.float32).eps
 
 class SmoothedValue:
     """Track a series of values and provide access to smoothed values over a
@@ -506,3 +506,15 @@ def convert_checkpoint(model_2d):
         else:
             state_dict_inflated[k] = v2d.clone()
     return state_dict_inflated
+
+def zscore(data: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    zscore data along the first axis.
+    """
+    mean = np.mean(data, axis=0)
+    std = np.std(data, axis=0)
+    bad_mask = std < EPS
+    data = (data - mean) / std.clip(min=EPS)
+    if np.any(bad_mask):
+        data[:, bad_mask] = 0.0
+    return data, mean, std

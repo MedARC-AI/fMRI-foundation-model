@@ -17,6 +17,7 @@ import torch.nn as nn
 from einops import rearrange
 import copy
 from mae_utils import video_vit
+from mae_utils.losses import SimCLRHandler
 
 class MaskedAutoencoderViT(nn.Module):
     """Masked Autoencoder with VisionTransformer backbone"""
@@ -482,14 +483,18 @@ class MaskedAutoencoderViT(nn.Module):
         else:
             if self.cls_embed:
                 # remove cls token
+                x1_cls = x1[:, :1, :]
+                x2_cls = x2[:, :1, :]
                 x1 = x1[:, 1:, :]
                 x2 = x2[:, 1:, :]
+            else:
+                x1_cls = x2_cls = None
             if source_ids is not None:
                 # remove source token
                 x1 = x1[:, 1:, :]
                 x2 = x2[:, 1:, :]
 
-            return [x1,x2], [mask1,mask2], ids_restore
+            return [[x1,x2], [x1_cls,x2_cls]], [mask1,mask2], ids_restore
 
     def forward_encoder_with_mask(self, x, ids_keep):
         # embed patches
@@ -770,15 +775,30 @@ class MaskedAutoencoderViT(nn.Module):
                 loss = self.forward_loss(imgs, pred, mask)
                 return loss, pred, mask, latent
             else:
+                latent, cls_tok = latent
                 latent1, latent2 = latent
+                cls_tok1, cls_tok2 = cls_tok
                 mask1, mask2 = mask
+                
                 true_mask = copy.deepcopy(mask1)
                 true_mask[mask2==0]=0 # dont try to predict the masks that were fed to the other encoder
                 pred1 = self.forward_decoder(latent1, ids_restore, use_contrastive_loss=use_contrastive_loss)  # [N, L, p*p*C]
                 pred2 = self.forward_decoder(latent2, ids_restore, use_contrastive_loss=use_contrastive_loss)  # [N, L, p*p*C]
+                
                 loss1 = self.forward_loss(imgs, pred1, true_mask)
                 loss2 = self.forward_loss(imgs, pred2, true_mask)
-                loss3 = self.forward_cyclic_loss(pred1, pred2, true_mask)
+                # loss3 = self.forward_cyclic_loss(pred1, pred2, true_mask)
+
+                if cls_tok1 is not None:
+                    # standard infonce loss
+                    all_cls = torch.cat([cls_tok1, cls_tok2], dim=0)
+                    all_cls_proj = self.simclr_handler(all_cls)
+
+                    # @todo: implement a temp schedule
+                    loss3 = SimCLRHandler.simclr_loss(all_cls_proj, temp=0.006)
+                else:
+                    loss3 = 0
+
                 return loss1, loss2, loss3, pred1, pred2, mask1, mask2, true_mask, latent1, latent2
 
     def forward_head(self, x):

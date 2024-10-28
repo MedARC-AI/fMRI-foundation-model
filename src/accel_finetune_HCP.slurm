@@ -6,12 +6,12 @@
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:1
 #SBATCH --gpus-per-task=1       # Set to equal gres=gpu:#!
-#SBATCH --time=12:00:00         # total run time limit (HH:MM:SS)
+#SBATCH --time=32:00:00         # total run time limit (HH:MM:SS)
 #SBATCH -e slurms/%j.err        # first create a "slurms" folder in current directory to store logs
 #SBATCH -o slurms/%j.out
 #SBATCH --comment=medarc
 #SBATCH --no-requeue
-#SBATCH --qos=idle
+#SBATCH --qos=normal
 
 export NUM_GPUS=1 # Set to equal gres=gpu:#!
 echo NUM_GPUS=$NUM_GPUS
@@ -37,4 +37,4 @@ echo WORLD_SIZE=$((${SLURM_NNODES} * ${NUM_GPUS}))
 export MODULEPATH=/opt/amazon/modules/modulefiles:$MODULEPATH
 
 export global_pool=True
-python HCP_downstream_finetune.py HCPflat_large_gsrFalse_ epoch99.pth
+python HCP_downstream_finetune.py NSDflat_large_gsrFalse_ epoch99.pth

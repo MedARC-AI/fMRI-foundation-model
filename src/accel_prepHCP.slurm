@@ -37,4 +37,4 @@ echo WORLD_SIZE=$((${SLURM_NNODES} * ${NUM_GPUS}))
 export MODULEPATH=/opt/amazon/modules/modulefiles:$MODULEPATH
 
 export global_pool=True
-python prep_HCP_downstream.py HCPflat_large_gsrFalse_ epoch99.pth
+python prep_HCP_downstream.py NSDflat_large_gsrFalse_ epoch99.pth

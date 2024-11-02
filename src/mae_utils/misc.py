@@ -16,14 +16,13 @@ import os
 import time
 from collections import defaultdict, deque, OrderedDict
 
-import util.logging as logging
+import mae_utils.logging as logging
 import psutil
 import torch
 import torch.distributed as dist
 from iopath.common.file_io import g_pathmgr as pathmgr
-from util.logging import master_print as print
+from mae_utils.logging import master_print as print
 from torch import inf
-
 
 logger = logging.get_logger(__name__)
 

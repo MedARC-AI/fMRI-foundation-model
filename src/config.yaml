@@ -1,9 +1,9 @@
-model_name: "NSDflat_huge_gsrFalse_2gpu_200epochs"
+model_name: "NSDflat_large_gsrFalse_"
 datasets_to_include: "NSD" # ["NSD", "HCP", "BOTH"]
 hcp_flat_path: "/weka/proj-medarc/shared/HCP-Flat"
 nsd_flat_path: "/weka/proj-medarc/shared/NSD-Flat"
 
-model_size: "huge"
+model_size: "large"
 global_pool: False
 cls_forward: False
 
@@ -27,7 +27,7 @@ use_source_embeds: False
 # Training Configs
 batch_size: 32 
 num_workers: 10
-num_epochs: 200 # 100 for MAE pretraining, can use less for downstream
+num_epochs: 100 # 100 for MAE pretraining, can use less for downstream
 seed: 42
 base_lr: 1.0e-3 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 200000

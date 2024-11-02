@@ -569,8 +569,6 @@ def seq_clips(frames: int = 16, mindeye_only=False, mindeye_TR_delay=3, only_sha
     def _filter(src: IterableDataset[Tuple[np.ndarray, Dict[str, Any]]]):
         for ii, (img, meta, events, meanstd) in enumerate(src):
             if mindeye_only:
-                if meta['sub']!=1: # forcing samples to come from only subj01
-                    continue
                 group = [(s['index'], s['nsd_id']) for s in events]
                 mindeye_info = np.array(group)
                 if len(mindeye_info)==0:
@@ -584,10 +582,10 @@ def seq_clips(frames: int = 16, mindeye_only=False, mindeye_TR_delay=3, only_sha
                             meta = {**meta, "start": start}
                             yield clip, meta, nsd_id, meanstd['mean'], meanstd['std']
                     else:
-                        if not (nsd_id in shared1000):
-                            clip = img[start : start + frames].copy()
-                            meta = {**meta, "start": start}
-                            yield clip, meta, nsd_id, meanstd['mean'], meanstd['std']
+                        # if not (nsd_id in shared1000):
+                        clip = img[start : start + frames].copy()
+                        meta = {**meta, "start": start}
+                        yield clip, meta, nsd_id, meanstd['mean'], meanstd['std']
             else:
                 offsets = np.arange(frames)
                 for offset in offsets:

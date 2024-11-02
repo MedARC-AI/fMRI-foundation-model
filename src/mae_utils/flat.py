@@ -585,7 +585,7 @@ def seq_clips(frames: int = 16, mindeye_only=False, mindeye_TR_delay=3, only_sha
                         # if not (nsd_id in shared1000):
                         clip = img[start : start + frames].copy()
                         meta = {**meta, "start": start}
-                        yield clip, meta, nsd_id, meanstd['mean'], meanstd['std']
+                        yield clip, int(f"{meta['ses']:02}{meta['run']:02}{start:03}"), nsd_id, meanstd['mean'], meanstd['std']
             else:
                 offsets = np.arange(frames)
                 for offset in offsets:

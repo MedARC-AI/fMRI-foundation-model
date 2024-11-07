@@ -20,7 +20,7 @@ source ~/.bashrc
 source /admin/home-paulscotti/foundation_env/bin/activate
 cd /weka/proj-fmri/paulscotti/fMRI-foundation-model/flat/src
 
-jupyter nbconvert main.ipynb --to python
+jupyter nbconvert main_hdf5.ipynb --to python
 if [ $? -ne 0 ]; then
   echo "Error: Conversion of ipynb to Python failed. Exiting."
   exit 1
@@ -39,4 +39,4 @@ export MODULEPATH=/opt/amazon/modules/modulefiles:$MODULEPATH
 srun torchrun \
 --nproc_per_node=$NUM_GPUS \
 --nnodes=$SLURM_NNODES \
-main.py
+main_hdf5.py

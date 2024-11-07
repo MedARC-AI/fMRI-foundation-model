@@ -65,6 +65,7 @@ def create_nsd_flat(
     buffer_size_mb: int = 3840,
     gsr: Optional[bool] = True,
     sub: Optional[str] = None,
+    ses: Optional[str] = None,
     run: Optional[str] = None,
     mindeye_only: Optional[bool] = False,
     only_shared1000: Optional[bool] = False,
@@ -91,7 +92,7 @@ def create_nsd_flat(
                 resampled=shuffle,
                 shardshuffle=1000 if shuffle else False,
                 nodesplitter=wds.split_by_node,
-                select_files=partial(select_files, sub=sub, run=run),
+                select_files=partial(select_files, sub=sub, ses=ses, run=run),
             )
             .decode()
             .map(partial(extract_sample,gsr=gsr))
@@ -106,7 +107,7 @@ def create_nsd_flat(
                 resampled=shuffle,
                 shardshuffle=1000 if shuffle else False,
                 nodesplitter=wds.split_by_node,
-                select_files=partial(select_files, sub=sub, run=run),
+                select_files=partial(select_files, sub=sub, ses=ses, run=run),
             )
             .decode()
             .map(partial(extract_sample,gsr=gsr))
@@ -465,16 +466,20 @@ def load_hcp_flat_mask(root: Path) -> torch.Tensor:
 import re
 def select_files(fname: str, *, 
                  task_only: bool = False,
-                 sub=None, run=None):
+                 sub=None, ses=None, run=None):
     # Define the file suffixes to keep
     suffix = ".".join(fname.split(".")[1:])
     keep = suffix in {"bold.npy", "meta.json", "events.json", "misc.npz"}
 
+    if ses is not None:
+        keep = keep and fnmatch(fname, f"*{ses}*")
+    
     if run is not None:
-        # Excluding run-14 because it's resting-state; note that run-01 is SOMETIMES resting-state
-        # https://cvnlab.slite.page/p/vjWTghPTb3/Time-series-data
-        match = re.search(r"run-(0[1-9]|1[0-3])", fname)
-        keep = keep and bool(match)
+        keep = keep and fnmatch(fname, f"*{run}*")
+        # # Excluding run-14 because it's resting-state; note that run-01 is SOMETIMES resting-state
+        # # https://cvnlab.slite.page/p/vjWTghPTb3/Time-series-data
+        # match = re.search(r"run-(0[1-9]|1[0-3])", fname)
+        # keep = keep and bool(match)
 
     # Additional filtering based on task_only and sub
     if task_only:

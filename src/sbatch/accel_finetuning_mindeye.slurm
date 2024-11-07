@@ -34,7 +34,8 @@ echo MASTER_ADDR=${MASTER_ADDR}
 echo MASTER_PORT=${MASTER_PORT}
 echo WORLD_SIZE=$((${SLURM_NNODES} * ${NUM_GPUS}))
 
-export MODULEPATH=/opt/amazon/modules/modulefiles:$MODULEPATH
+export frozenMAE=False
+export num_sessions=5
 
 srun torchrun \
 --nproc_per_node=$NUM_GPUS \

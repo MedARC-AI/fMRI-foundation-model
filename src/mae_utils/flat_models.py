@@ -699,7 +699,7 @@ class MaskedAutoencoderViT(nn.Module):
         loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
         return loss
 
-    def forward(self, imgs, mask_ratio=0.75, use_contrastive_loss=False, forward_features=False, global_pool=True, cls_forward=False, source_ids=None):
+    def forward(self, imgs, mask_ratio=0.75, use_contrastive_loss=False, forward_features=False, global_pool=True, cls_forward=False, source_ids=None, distributed=False):
         if forward_features:
             # embed patches
             x = self.patch_embed(imgs)
@@ -795,7 +795,7 @@ class MaskedAutoencoderViT(nn.Module):
                     all_cls_proj = self.simclr_handler(all_cls)
 
                     # @todo: implement a temp schedule
-                    loss3 = SimCLRHandler.simclr_loss(all_cls_proj, temp=0.006)
+                    loss3 = SimCLRHandler.simclr_loss(all_cls_proj, temp=0.006, distributed=distributed)
                 else:
                     loss3 = 0
 

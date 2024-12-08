@@ -9,6 +9,10 @@ cls_forward: False
 
 gsr: False
 use_contrastive_loss: True
+use_decoder_contrastive_loss: False
+use_source_embeds: True
+source_embed_train_mode: "ce" # ema or ce
+
 patch_size: 16
 pct_masks_to_decode: 1
 decoder_embed_dim: 512
@@ -18,11 +22,10 @@ pred_t_dim: 8
 t_patch_size: 2
 cls_embed: True
 no_qkv_bias: False
-sep_pos_embed: True
+sep_pos_embed: True # has to be true for source embeds
 trunc_init: False
 norm_pix_loss: False
 contrastive_loss_weight: 1.0
-use_source_embeds: True
 
 # Training Configs
 batch_size: 16

@@ -695,7 +695,9 @@ class MaskedAutoencoderViT(nn.Module):
         loss = (pred - target) ** 2
         if self.img_mask is not None:
             # exclude missing pixels from loss
-            mask = mask[:, 1:].unsqueeze(-1) * self.img_mask_patches
+            if self.use_source_embeds:
+                mask = mask[:, 1:]
+            mask = mask.unsqueeze(-1) * self.img_mask_patches
         else:
             loss = loss.mean(dim=-1)  # [N, L], mean loss per patch
 
@@ -809,6 +811,8 @@ class MaskedAutoencoderViT(nn.Module):
                 pred = ret_list.pop(0)
                 if self.use_source_embeds:
                     reconstructed_source = ret_list.pop(0)
+                else:
+                    reconstructed_source = None
                 loss = self.forward_loss(imgs, pred, mask, reconstructed_source=reconstructed_source, source_ids=source_ids)
                 if source_ids is not None:  
                     loss, source_loss = loss
@@ -829,12 +833,16 @@ class MaskedAutoencoderViT(nn.Module):
                 pred1 = ret_list1.pop(0)
                 if self.use_source_embeds:
                     reconstructed_source1 = ret_list1.pop(0)
+                else:
+                    reconstructed_source1 = None
                 if self.use_decoder_contrastive_loss:
                     decoder_cls_token1 = ret_list1.pop(0)
                 ret_list2 = self.forward_decoder(latent2, ids_restore, use_contrastive_loss=use_contrastive_loss)  # [N, L, p*p*C]
                 pred2 = ret_list2.pop(0)
                 if self.use_source_embeds:
                     reconstructed_source2 = ret_list2.pop(0)
+                else:
+                    reconstructed_source2 = None
                 if self.use_decoder_contrastive_loss:
                     decoder_cls_token2 = ret_list2.pop(0)
                 

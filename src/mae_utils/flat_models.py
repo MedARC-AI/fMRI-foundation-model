@@ -812,6 +812,8 @@ class MaskedAutoencoderViT(nn.Module):
                 loss = self.forward_loss(imgs, pred, mask, reconstructed_source=reconstructed_source, source_ids=source_ids)
                 if source_ids is not None:  
                     loss, source_loss = loss
+                    # remove source token from mask so that it can be unpatchified
+                    mask = mask[:, 1:]
                 else:
                     source_loss = torch.tensor(0.0)
                 return loss, source_loss, pred, mask, latent
@@ -841,6 +843,9 @@ class MaskedAutoencoderViT(nn.Module):
                 if source_ids is not None:
                     recon_loss1, source_loss1 = recon_loss1
                     recon_loss2, source_loss2 = recon_loss2
+                    # remove source token from mask so that it can be unpatchified
+                    mask1 = mask1[:, 1:]
+                    mask2 = mask2[:, 1:]
                 else:
                     source_loss1 = torch.tensor(0.0)
                     source_loss2 = torch.tensor(0.0)

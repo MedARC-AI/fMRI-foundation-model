@@ -1,9 +1,9 @@
-model_name: "NSDflat_large_gsrFalse_source_cont"
-datasets_to_include: "NSD" # ["NSD", "HCP", "BOTH"]
+model_name: "NSDflat_large_gsrFalse_sourceloss_cont"
+datasets_to_include: "BOTH" # ["NSD", "HCP", "BOTH"]
 hcp_flat_path: "/weka/proj-medarc/shared/HCP-Flat"
 nsd_flat_path: "/weka/proj-medarc/shared/NSD-Flat"
 
-model_size: "large"
+model_size: "small"
 global_pool: False
 cls_forward: False
 

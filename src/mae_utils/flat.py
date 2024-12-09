@@ -234,6 +234,7 @@ def create_hcp_flat(
     dataset = dataset.map_dict(
         image=partial(to_tensor_hcp, mask=load_hcp_flat_mask(root))
     )
+    dataset = dataset.to_tuple("image", "meta")
     return dataset
 
 
@@ -375,7 +376,7 @@ def ungsr(sample: Dict[str, Any]):
     bold = bold + global_signal[:, None] * beta + offset
 
     # re-zscore
-    bold, _, _ = zscore(bold)
+    bold = zscore(bold)
     return {**sample, "bold": bold}
 
 

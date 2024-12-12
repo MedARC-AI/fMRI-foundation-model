@@ -1,4 +1,4 @@
-model_name: "NSDflat_large_gsrFalse_sourceloss_cont"
+model_name: "BOTHflat_small_gsrFalse_sourceadd_cont"
 datasets_to_include: "BOTH" # ["NSD", "HCP", "BOTH"]
 hcp_flat_path: "/weka/proj-medarc/shared/HCP-Flat"
 nsd_flat_path: "/weka/proj-medarc/shared/NSD-Flat"
@@ -11,6 +11,7 @@ gsr: False
 use_contrastive_loss: True
 use_decoder_contrastive_loss: False
 use_source_embeds: True
+source_embed_mode: "add"  # "append" or "add"
 source_embed_train_mode: "ce" # ema or ce
 
 patch_size: 16
@@ -51,5 +52,5 @@ ckpt_saving: True
 ckpt_interval: 25 # in epochs
 print_interval: 20 # in steps
 resume_from_ckpt: True
-wandb_log: False # True
+wandb_log: True # True
 wandb_rand: 0 # 0 means set to random; if resuming a wandb run check what its wandb_rand was and change it here

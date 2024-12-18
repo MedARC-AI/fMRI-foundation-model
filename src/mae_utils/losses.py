@@ -163,7 +163,3 @@ class SimCLRHandler(nn.Module):
             contr_loss = -(logits.log_softmax(-1) * all_labels).sum(-1).mean()
 
             return contr_loss
-
-
-
-

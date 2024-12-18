@@ -27,7 +27,6 @@ sep_pos_embed: True # has to be true for source embeds
 trunc_init: False
 norm_pix_loss: False
 contrastive_loss_weight: 1.0
-use_source_embeds: False
 
 # Training Configs
 batch_size: 16 # set to 32 if not contrastive, 16 if contrastive because it'll double the bs

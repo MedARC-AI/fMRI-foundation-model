@@ -1,14 +1,19 @@
-model_name: "NSDflat_large_gsrFalse_"
-datasets_to_include: "NSD" # ["NSD", "HCP", "BOTH"]
+model_name: "BOTHflat_small_gsrFalse_sourceadd_cont"
+datasets_to_include: "BOTH" # ["NSD", "HCP", "BOTH"]
 hcp_flat_path: "/weka/proj-medarc/shared/HCP-Flat"
 nsd_flat_path: "/weka/proj-medarc/shared/NSD-Flat"
 
-model_size: "large"
+model_size: "small"
 global_pool: False
 cls_forward: False
 
 gsr: False
-use_contrastive_loss: False
+use_contrastive_loss: True
+use_decoder_contrastive_loss: False
+use_source_embeds: True
+source_embed_mode: "add"  # "append" or "add"
+source_embed_train_mode: "ce" # ema or ce
+
 patch_size: 16
 pct_masks_to_decode: 1
 decoder_embed_dim: 512
@@ -18,16 +23,16 @@ pred_t_dim: 8
 t_patch_size: 2
 cls_embed: True
 no_qkv_bias: False
-sep_pos_embed: True
+sep_pos_embed: True # has to be true for source embeds
 trunc_init: False
 norm_pix_loss: False
 contrastive_loss_weight: 1.0
 use_source_embeds: False
 
 # Training Configs
-batch_size: 32 
-num_workers: 10
-num_epochs: 100 # 100 for MAE pretraining, can use less for downstream
+batch_size: 16 # set to 32 if not contrastive, 16 if contrastive because it'll double the bs
+num_workers: 8
+num_epochs: 100 # 200 because using 2 datasets now instead of 1 # 100 for MAE pretraining, can use less for downstream
 seed: 42
 base_lr: 1.0e-3 # Keep the x.0 else will be converted to string
 num_samples_per_epoch: 200000

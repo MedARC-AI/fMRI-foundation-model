@@ -112,21 +112,54 @@ class SimCLRHandler(nn.Module):
         return self.projector(x)
 
     @staticmethod
-    def simclr_loss(lats, temp=0.006):
-        logits = (nn.functional.normalize(lats.flatten(1),dim=-1) @
-                    nn.functional.normalize(lats.flatten(1),dim=-1).T) / temp
+    def simclr_loss(lats, temp=0.006, distributed=False):
+        if not distributed:
+            logits = (nn.functional.normalize(lats.flatten(1),dim=-1) @
+                        nn.functional.normalize(lats.flatten(1),dim=-1).T) / temp
 
-        labels = torch.diag_embed(
-            torch.ones(logits.shape[0] // 2), offset=logits.shape[0] // 2
-        ) + torch.diag_embed(torch.ones(logits.shape[0] // 2), offset=-logits.shape[0] // 2)
-        labels = labels.to(lats.device)
-        
-        mask = torch.ones_like(logits).bool()
-        torch.diagonal(mask).fill_(False)
-        
-        labels = labels[mask].reshape(logits.shape[0], logits.shape[0]-1)
-        logits = logits[mask].reshape(*labels.shape)
+            labels = torch.diag_embed(
+                torch.ones(logits.shape[0] // 2), offset=logits.shape[0] // 2
+            ) + torch.diag_embed(torch.ones(logits.shape[0] // 2), offset=-logits.shape[0] // 2)
+            labels = labels.to(lats.device)
+            
+            mask = torch.ones_like(logits).bool()
+            torch.diagonal(mask).fill_(False)
+            
+            labels = labels[mask].reshape(logits.shape[0], logits.shape[0]-1)
+            logits = logits[mask].reshape(*labels.shape)
 
-        contr_loss = -(logits.log_softmax(-1) * labels).sum(-1).mean()
+            contr_loss = -(logits.log_softmax(-1) * labels).sum(-1).mean()
 
-        return contr_loss
+            return contr_loss
+        else:
+            rank = int(os.getenv('LOCAL_RANK'))
+            world_size = int(os.getenv('WORLD_SIZE'))
+
+            all_lats = torch.cat(torch.distributed.nn.all_gather(lats), dim=0)
+            logits = (nn.functional.normalize(lats.flatten(1),dim=-1) @
+                        nn.functional.normalize(all_lats.flatten(1),dim=-1).T) / temp
+
+            # Calculate offsets for positive pairs based on rank
+            batch_size = lats.shape[0]
+            pos_offset = rank * batch_size
+
+            # common label structure
+            labels = torch.diag_embed(
+                torch.ones(batch_size // 2), offset=batch_size // 2
+            ) + torch.diag_embed(torch.ones(batch_size // 2), offset=-batch_size // 2)
+            
+            # assign labels to correct position
+            all_labels = torch.zeros_like(logits)
+            all_labels[:, pos_offset:pos_offset+batch_size] = labels.to(lats.device)
+
+            mask = torch.ones((batch_size, batch_size), dtype=bool).bool()
+            torch.diagonal(mask).fill_(False)
+            all_mask = torch.ones_like(logits).bool()
+            all_mask[:, pos_offset:pos_offset+batch_size] = mask
+
+            all_labels = all_labels[all_mask].reshape(batch_size, world_size*batch_size-1)
+            logits = logits[all_mask].reshape(*all_labels.shape)
+
+            contr_loss = -(logits.log_softmax(-1) * all_labels).sum(-1).mean()
+
+            return contr_loss

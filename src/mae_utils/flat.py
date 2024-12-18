@@ -13,8 +13,8 @@ import torch
 import webdataset as wds
 from torch.utils.data import IterableDataset
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from utils import zscore
+# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# from utils import zscore
 
 shared1000 = np.where(np.load("/weka/proj-medarc/shared/mindeyev2_dataset/shared1000.npy"))[0]
 
@@ -66,6 +66,7 @@ def create_nsd_flat(
     gsr: Optional[bool] = True,
     sub: Optional[str] = None,
     ses: Optional[str] = None,
+    num_sessions: Optional[int] = 40,
     run: Optional[str] = None,
     mindeye_only: Optional[bool] = False,
     only_shared1000: Optional[bool] = False,
@@ -77,44 +78,30 @@ def create_nsd_flat(
     """
     urls = get_nsd_flat_urls(root, shards)
 
-    clipping = seq_clips(frames, mindeye_only=mindeye_only, only_shared1000=only_shared1000, mindeye_TR_delay=mindeye_TR_delay)
-
+    clipping = seq_clips(frames, mindeye_only=mindeye_only, 
+                         only_shared1000=only_shared1000, mindeye_TR_delay=mindeye_TR_delay,
+                         mask=load_nsd_flat_mask(), gsr=gsr)
+    
     if shuffle:
         buffer_size = int(buffer_size_mb * 1024 * 1024 / (frames * FRAME_SIZE_BYTES))
         print(f"Shuffle buffer size: {buffer_size}")
     else:
         buffer_size = 0
 
-    if gsr:
-        dataset = (
-            wds.WebDataset(
-                urls,
-                resampled=shuffle,
-                shardshuffle=1000 if shuffle else False,
-                nodesplitter=wds.split_by_node,
-                select_files=partial(select_files, sub=sub, ses=ses, run=run),
-            )
-            .decode()
-            .map(partial(extract_sample,gsr=gsr))
-            .compose(clipping)
-            .shuffle(buffer_size)
-            .map_tuple(partial(to_tensor, mask=load_nsd_flat_mask()))
+    dataset = (
+        wds.WebDataset(
+            urls,
+            resampled=False,
+            shardshuffle=1000 if shuffle else False,
+            nodesplitter=wds.split_by_node,
+            workersplitter=wds.split_by_worker,
+            select_files=partial(select_files, sub=sub, ses=ses, run=run, num_sessions=num_sessions),
         )
-    else:
-        dataset = (
-            wds.WebDataset(
-                urls,
-                resampled=shuffle,
-                shardshuffle=1000 if shuffle else False,
-                nodesplitter=wds.split_by_node,
-                select_files=partial(select_files, sub=sub, ses=ses, run=run),
-            )
-            .decode()
-            .map(partial(extract_sample,gsr=gsr))
-            .compose(clipping)
-            .shuffle(buffer_size)
-            .map_tuple(partial(to_tensor_gsrFalse, mask=load_nsd_flat_mask()))
-        )
+        .decode()
+        .map(partial(extract_sample,gsr=gsr))
+        .compose(clipping)
+        .shuffle(buffer_size)
+    )
     return dataset
 
 def get_nsd_flat_urls(
@@ -146,47 +133,37 @@ def load_nsd_flat_mask_visual(folder="/weka/proj-medarc/shared/NSD-Flat/") -> to
 def create_hcp_flat(
     root: Optional[str] = None,
     shards: Optional[Union[int, Iterable[int]]] = None,
-    sub_list: Optional[Union[Literal["train", "test"], List[str]]] = None,
     clip_mode: Literal["seq", "event"] = "seq",
-    target: Optional[Literal["task", "trial_type"]] = None,
     frames: int = 16,
-    stride: Optional[int] = None,
-    gsr: bool = True,
-    shuffle: bool = False,
-    buffer_size: int = 1024,
+    shuffle: Optional[bool] = None,
+    buffer_size_mb: int = 3840,
+    gsr: Optional[bool] = True,
 ) -> wds.WebDataset:
     """
-    Create HCP-Flat dataset. Yields dict samples with keys "image", "meta", and
-    optionally "target". The images have shape (C, T, H, W).
+    Create HCP-Flat dataset. Yields samples of (key, images) where key is the webdataset
+    sample key and images is shape (C, T, H, W).
 
     References:
         https://github.com/webdataset/webdataset/issues/250#issuecomment-1454094496
         https://github.com/tmbdev-archive/webdataset-imagenet-2/blob/main/imagenet.py
         https://github.com/huggingface/pytorch-image-models/blob/main/timm/data/readers/reader_wds.py
     """
-    assert (
-        target != "trial_type" or clip_mode == "event"
-    ), "event clipping required for trial_type targets"
-
     root = root or os.environ.get("HCP_FLAT_ROOT") or HCP_FLAT_ROOT
     urls = get_hcp_flat_urls(root, shards)
-    if sub_list in {"train", "test"}:
-        sub_list = get_hcp_flat_sub_list(root, split=sub_list)
 
     if shuffle:
-        # Nb, after undoing gsr the data are float32 rather than uint8, to avoid more
-        # precision loss
-        dtype_size_bytes = 4 if not gsr else 1
-        buffer_size_bytes = buffer_size * frames * HCP_MASK_SIZE * dtype_size_bytes
-        print(f"Shuffle buffer size (MB): {buffer_size_bytes / 1024 / 1024:.0f}")
+        buffer_size = int(buffer_size_mb * 1024 * 1024 / (frames * FRAME_SIZE_BYTES))
+        print(f"Shuffle buffer size: {buffer_size}")
+    else:
+        buffer_size = 0
 
     if clip_mode == "seq":
-        clipping = seq_clips_hcp(frames, stride=stride, is_training=shuffle)
+        clipping = seq_clips(frames, mask=load_hcp_flat_mask(), gsr=gsr)
     elif clip_mode == "event":
-        # all_events_path = "/weka/proj-medarc/shared/HCP-Flat/all_events.json.gz"
-        # with gzip.open(all_events_path) as f:
-        #     all_events = json.load(f)
-        clipping = event_clips_hcp(frames)
+        all_events_path = "/weka/proj-medarc/shared/HCP-Flat/all_events.json.gz"
+        with gzip.open(all_events_path) as f:
+            all_events = json.load(f)
+        clipping = hcp_event_clips(all_events, frames)
 
     # In training, we resample shards with replacement independently in every worker and
     # yield batches up to the target number of samples. In test, we iterate over the
@@ -205,34 +182,16 @@ def create_hcp_flat(
     dataset = (
         wds.WebDataset(
             urls,
-            resampled=shuffle,
+            resampled=False,
             shardshuffle=1000 if shuffle else False,
             nodesplitter=wds.split_by_node,
-            select_files=select_files_hcp(sub_list=sub_list, task_only=clip_mode=="event"),
+            workersplitter=wds.split_by_worker,
+            select_files=partial(select_files_hcp, task_only=clip_mode=="event"),
         )
         .decode()
-        .map(extract_sample_hcp)
-    )
-
-    if not gsr:
-        dataset = dataset.map(ungsr)
-
-    dataset = dataset.compose(clipping)
-
-    # add an integer "target" key to the sample
-    # this will also filter out samples without a valid target
-    if target is not None:
-        class_map_path = Path(root) / f"{target}_class_map.json"
-        with class_map_path.open() as f:
-            class_map = json.load(f)
-        dataset = dataset.compose(with_targets(target, class_map))
-
-    if shuffle:
-        dataset = dataset.shuffle(buffer_size)
-
-    # late conversion to tensor, after buffering to save memory
-    dataset = dataset.map_dict(
-        image=partial(to_tensor_hcp, mask=load_hcp_flat_mask(root))
+        .map(partial(extract_sample,gsr=gsr))
+        .compose(clipping)
+        .shuffle(buffer_size)
     )
     return dataset
 
@@ -258,239 +217,91 @@ def load_hcp_flat_mask(folder="/weka/proj-medarc/shared/HCP-Flat/") -> torch.Ten
     mask = torch.as_tensor(mask)
     return mask
 
-# def hcp_event_clips(
-#     all_events: Dict[str, List[Dict[str, Any]]],
-#     frames: int = 16,
-#     delay: float = DEFAULT_DELAY_SECS,
-# ):
-#     def _filter(src: IterableDataset[Tuple[np.ndarray, Dict[str, Any]]]):
-#         for img, meta in src:
-#             tr = HCP_TR[meta["mag"]]
-#             events = all_events[meta["key"]]
-#             if not events or meta["task"] not in INCLUDE_TASKS:
-#                 continue
-
-#             for event in events:
-#                 cond = event["trial_type"]
-#                 if cond not in INCLUDE_CONDS:
-#                     continue
-
-#                 onset = event["onset"]
-#                 duration = event["duration"]
-#                 onset_idx = int((onset + delay) / tr)
-#                 # sometimes the end of the trial is cut off
-#                 offset_idx = min(int((onset + delay + duration) / tr), len(img))
-#                 count = (offset_idx - onset_idx) // frames
-#                 for ii in range(count):
-#                     start = onset_idx + ii * frames
-#                     clip = img[start : start + frames].copy()
-#                     meta = {**meta, "start": start, "trial_type": cond}
-#                     yield clip, meta
-
-def get_hcp_flat_urls(
-    root: Optional[str] = None,
-    shards: Optional[Union[int, Iterable[int]]] = None,
-):
-    root = root or os.environ.get("HCP_FLAT_ROOT") or HCP_FLAT_ROOT
-
-    shards = shards or HCP_NUM_SHARDS
-    if isinstance(shards, int):
-        shards = range(shards)
-    assert (
-        min(shards) >= 0 and max(shards) < HCP_NUM_SHARDS
-    ), f"Invalid shards {shards}; expected in [0, {HCP_NUM_SHARDS})"
-
-    urls = [f"{root}/tars/hcp-flat_{shard:06d}.tar" for shard in shards]
-    return urls
-
-
-def get_hcp_flat_sub_list(
-    root: Optional[str] = None,
-    split: Literal["train", "test"] = "train",
-):
-    root = root or os.environ.get("HCP_FLAT_ROOT") or HCP_FLAT_ROOT
-    sub_list = f"{root}/subjects_{split}.txt"
-    return sub_list
-
-
-def select_files_hcp(
-    sub_list: Optional[Union[List[str], str]] = None,
-    task_only: bool = False,
-    exclude_exts: Optional[Tuple[str, ...]] = None,
-):
-    if isinstance(sub_list, str):
-        sub_list = np.loadtxt(sub_list, dtype=str).tolist()
-
-    if sub_list is not None:
-        sub_list = set(sub_list)
-
-    if exclude_exts is not None:
-        exclude_exts = set(exclude_exts)
-
-    def _filter(fname: str):
-        key, ext = fname.split(".", maxsplit=1)
-
-        if exclude_exts and ext in exclude_exts:
-            return False
-
-        ents = dict(kv.split("-") for kv in key.split("_"))
-
-        if task_only and not (ents["mod"] == "tfMRI" and ents["mag"] == "3T"):
-            return False
-
-        if sub_list and ents["sub"] not in sub_list:
-            return False
-
-        return True
-
-    return _filter
-
-
-def extract_sample_hcp(sample: Dict[str, Any]):
-    key = sample["__key__"]
-    bold = sample["bold.npy"]
-    meta = sample["meta.json"]
-    meta = {"key": key, **meta}
-    events = sample["events.json"]
-    misc = sample.get("misc.npz")
-    return {"bold": bold, "meta": meta, "events": events, "misc": misc}
-
-
-def ungsr(sample: Dict[str, Any]):
-    bold = sample["bold"]
-    misc = sample["misc"]
-
-    mean = misc["mean"]
-    std = misc["std"]
-    offset = misc["offset"]
-    global_signal = misc["global_signal"]
-    beta = misc["beta"]
-
-    # uint8 to float32 with normal range
-    bold = bold.astype("float32") / 255.0
-    bold = (bold - 0.5) / 0.2
-
-    # recover timeseries
-    bold = std * bold + mean
-    bold = bold + global_signal[:, None] * beta + offset
-
-    # re-zscore
-    bold, _, _ = zscore(bold)
-    return {**sample, "bold": bold}
-
-
-def to_tensor_hcp(img: np.ndarray, mask: torch.Tensor):
-    img = torch.from_numpy(img)
-    if img.dtype == torch.uint8:
-        img = img / 255.0
-        img = (img - 0.5) / 0.2
-    img = unmask(img, mask)
-    img = img.unsqueeze(0)  # (C, T, H, W)
-    return img
-
-
-
-def seq_clips_hcp(frames: int = 16, stride: Optional[int] = None, is_training: bool = True):
-    stride = stride or frames
-
-    def _filter(src: IterableDataset[Dict[str, Any]]):
-        for sample in src:
-            bold = sample["bold"]
-            meta = sample["meta"]
-
-            first_idx = random.randint(0, frames) if is_training else 0
-            count = len(bold) // frames
-            for ii in range(count):
-                start = first_idx + ii * frames
-                stop = start + frames
-                if stop > len(bold):
-                    break
-
-                # copy to avoid a memory leak due to storing the entire underlying array
-                # https://github.com/webdataset/webdataset/issues/354
-                clip = bold[start:stop].copy()
-                meta = {**meta, "start": start}
-                yield {"image": clip, "meta": meta}
-    return _filter
-
-
-def event_clips_hcp(
+def hcp_event_clips(
+    all_events: Dict[str, List[Dict[str, Any]]],
     frames: int = 16,
-    delay_secs: float = DEFAULT_DELAY_SECS,
+    delay: float = DEFAULT_DELAY_SECS,
 ):
-    def _filter(src: IterableDataset[Dict[str, Any]]):
-        for sample in src:
-            bold = sample["bold"]
-            meta = sample["meta"]
-            events = sample["events"]
+    def _filter(src: IterableDataset[Tuple[np.ndarray, Dict[str, Any]]]):
+        for img, meta in src:
             tr = HCP_TR[meta["mag"]]
+            events = all_events[meta["key"]]
+            if not events or meta["task"] not in INCLUDE_TASKS:
+                continue
+
             for event in events:
                 cond = event["trial_type"]
-                onset = event["onset"]
-                duration = event["duration"]
-
                 if cond not in INCLUDE_CONDS:
                     continue
-                first_idx = int((onset + delay_secs) / tr)
-                # we extract at least one clip per block, and then as many as fit
-                count = max(int(duration / tr / frames), 1)
+
+                onset = event["onset"]
+                duration = event["duration"]
+                onset_idx = int((onset + delay) / tr)
+                # sometimes the end of the trial is cut off
+                offset_idx = min(int((onset + delay + duration) / tr), len(img))
+                count = (offset_idx - onset_idx) // frames
                 for ii in range(count):
-                    start = first_idx + ii * frames
-                    stop = start + frames
-                    # sometimes the trial extends past the end of the run
-                    if stop > len(bold):
-                        break
-
-                    clip = bold[start:stop].copy()
+                    start = onset_idx + ii * frames
+                    clip = img[start : start + frames].copy()
                     meta = {**meta, "start": start, "trial_type": cond}
-                    yield {"image": clip, "meta": meta}
-    return _filter
+                    yield clip, meta
 
+def select_files_hcp(fname: str, *, 
+                 task_only: bool = False):
+    # Define the file suffixes to keep
+    suffix = ".".join(fname.split(".")[1:])
+    keep = suffix in {"bold.npy", "meta.json", "events.json", "misc.npz"}
 
-def with_targets(key: str, class_id_map: Dict[str, int]):
-    def _filter(src: IterableDataset[Dict[str, Any]]):
-        for sample in src:
-            label = sample["meta"][key]
-            if label in class_id_map:
-                target = class_id_map[label]
-                yield {**sample, "target": target}
-    return _filter
+    # Additional filtering based on task_only
+    if task_only:
+        keep = keep and fnmatch(fname, "*mod-tfMRI*mag-3T*")
 
-
-def load_hcp_flat_mask(root: Path) -> torch.Tensor:
-    mask = np.load(Path(root) / "hcp-flat_mask.npy")
-    mask = torch.as_tensor(mask)
-    return mask
+    return keep
 
 # ALL #
 import re
-def select_files(fname: str, *, 
-                 task_only: bool = False,
-                 sub=None, ses=None, run=None):
+def select_files(fname: str, *, sub=None, ses=None, run=None, num_sessions=40):
     # Define the file suffixes to keep
     suffix = ".".join(fname.split(".")[1:])
     keep = suffix in {"bold.npy", "meta.json", "events.json", "misc.npz"}
 
     if ses is not None:
-        keep = keep and fnmatch(fname, f"*{ses}*")
-    
-    if run is not None:
-        keep = keep and fnmatch(fname, f"*{run}*")
-        # # Excluding run-14 because it's resting-state; note that run-01 is SOMETIMES resting-state
-        # # https://cvnlab.slite.page/p/vjWTghPTb3/Time-series-data
-        # match = re.search(r"run-(0[1-9]|1[0-3])", fname)
-        # keep = keep and bool(match)
+        keep = keep and (ses in fname)
 
-    # Additional filtering based on task_only and sub
-    if task_only:
-        keep = keep and fnmatch(fname, "*mod-tfMRI*mag-3T*")
-    elif sub is not None:
-        keep = keep and fnmatch(fname, f"*{sub}*")
+    if num_sessions < 10:
+        session_pattern = rf"ses-0[1-{num_sessions}]"
+    elif num_sessions < 20:
+        session_pattern = rf"ses-0[1-9]|ses-1[0-{num_sessions - 10}]"
+    elif num_sessions < 30:
+        session_pattern = rf"ses-0[1-9]|ses-1[0-9]|ses-2[0-{num_sessions - 20}]"
+    else:
+        session_pattern = rf"ses-0[1-9]|ses-1[0-9]|ses-2[0-9]|ses-3[0-{num_sessions - 30}]"
+
+    if num_sessions < 40:
+        keep = keep and re.search(session_pattern, fname) is not None
+
+    # If `run` is specified, handle special cases for "task_only" or other `run` patterns
+    if run is not None:
+        if run == "task_only":
+            # Exclude run-14 (resting-state); allow only specific task runs
+            match = re.search(r"run-(0[1-9]|1[0-3])", fname)
+            keep = keep and match is not None
+        else:
+            keep = keep and (run in fname)
+
+    if sub is not None:
+        if isinstance(sub, list):
+            # If `sub` is a list of numbers denoting subject IDs
+            sub_pattern = rf"sub-({'|'.join(f'{s:02d}' for s in sub)})"
+            keep = keep and re.search(sub_pattern, fname) is not None
+        else:
+            # if sub is simply something like 'sub-01'
+            keep = keep and (sub in fname)
 
     return keep
 
 
-def extract_sample(sample: Dict[str, Any], gsr=True):
+def extract_sample(sample: Dict[str, Any], gsr=False):
     key = sample["__key__"]
     img = sample["bold.npy"]
     meta = sample["meta.json"]
@@ -519,25 +330,14 @@ def extract_sample(sample: Dict[str, Any], gsr=True):
     return img, meta, events, misc
 
 
-def to_tensor(img, mask, mask2=None):
-    img = torch.from_numpy(img) / 255.0
-    img = (img - 0.5) / 0.2
-    try:
-        img = unmask(img, mask)
-    except:
-        img = unmask(img, mask2)
-    img = img.unsqueeze(0)  # (C, T, H, W)
-    return img
-
-def to_tensor_gsrFalse(img, mask, mask2=None):
+def to_tensor(img, mask, gsr=False):
     img = torch.from_numpy(img)
-    try:
+    if gsr:
+        img = (img - 0.5) / 0.2
+    if mask is not None:
         img = unmask(img, mask)
-    except:
-        img = unmask(img, mask2)
     img = img.unsqueeze(0).float()  # (C, T, H, W)
     return img
-
 
 def unmask(img: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     unmasked = torch.zeros(
@@ -570,7 +370,7 @@ def batch_unmask(img: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
 
     return unmasked
 
-def seq_clips(frames: int = 16, mindeye_only=False, mindeye_TR_delay=3, only_shared1000=False):
+def seq_clips(frames: int = 16, mindeye_only=False, mindeye_TR_delay=3, only_shared1000=False, mask=None, gsr=False):
     def _filter(src: IterableDataset[Tuple[np.ndarray, Dict[str, Any]]]):
         for ii, (img, meta, events, meanstd) in enumerate(src):
             if mindeye_only:
@@ -581,16 +381,24 @@ def seq_clips(frames: int = 16, mindeye_only=False, mindeye_TR_delay=3, only_sha
                 image_onsets, image_nsd_id = mindeye_info[:,0], mindeye_info[:,1]
                 for istart, start in enumerate(image_onsets + mindeye_TR_delay):
                     nsd_id = image_nsd_id[istart].item() - 1 # because nsd_id is 1-indexed
-                    if only_shared1000:
+                    if only_shared1000 is None:
+                        if not (nsd_id in shared1000):
+                            clip = img[start : start + frames].copy()
+                            meta = {**meta, "start": start}
+                            clip = to_tensor(clip, mask=mask, gsr=gsr)
+                            yield clip, int(f"{meta['ses']:02}{meta['run']:02}{start:03}"), nsd_id, meta['sub'], meanstd['mean'], meanstd['std']
+                    elif only_shared1000:
                         if nsd_id in shared1000:
                             clip = img[start : start + frames].copy()
                             meta = {**meta, "start": start}
-                            yield clip, meta, nsd_id, meanstd['mean'], meanstd['std']
+                            clip = to_tensor(clip, mask=mask, gsr=gsr)
+                            yield clip, meta, nsd_id, meta['sub'], meanstd['mean'], meanstd['std']
                     else:
                         # if not (nsd_id in shared1000):
                         clip = img[start : start + frames].copy()
                         meta = {**meta, "start": start}
-                        yield clip, int(f"{meta['ses']:02}{meta['run']:02}{start:03}"), nsd_id, meanstd['mean'], meanstd['std']
+                        clip = to_tensor(clip, mask=mask, gsr=gsr)
+                        yield clip, int(f"{meta['ses']:02}{meta['run']:02}{start:03}"), nsd_id, meta['sub'], meanstd['mean'], meanstd['std']
             else:
                 offsets = np.arange(frames)
                 for offset in offsets:
@@ -599,5 +407,6 @@ def seq_clips(frames: int = 16, mindeye_only=False, mindeye_TR_delay=3, only_sha
                         # https://github.com/webdataset/webdataset/issues/354
                         clip = img[start : start + frames].copy()
                         meta = {**meta, "start": start}
-                        yield clip, meta, events, meanstd['mean'], meanstd['std']
+                        clip = to_tensor(clip, mask=mask, gsr=gsr)
+                        yield clip, meta, meanstd['mean'], meanstd['std'] # events was removed due to dataloading error
     return _filter

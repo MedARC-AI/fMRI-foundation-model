@@ -14,6 +14,7 @@
 from functools import partial
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from einops import rearrange
 import copy
 from mae_utils import video_vit
@@ -49,6 +50,11 @@ class MaskedAutoencoderViT(nn.Module):
         hcp_mask=None,
         pct_masks_to_decode=1,
         use_source_embeds=False,
+        source_embed_mode="add",
+        source_embed_train_mode="ema",
+        num_source_tokens=3,
+        use_contrastive_loss=False,
+        use_decoder_contrastive_loss=False,
         **kwargs,
     ):
         super().__init__()
@@ -60,6 +66,11 @@ class MaskedAutoencoderViT(nn.Module):
         self.embed_dim = embed_dim
         self.use_source_embeds = use_source_embeds
         self.pct_masks_to_decode = pct_masks_to_decode
+        self.use_contrastive_loss = use_contrastive_loss
+        self.use_decoder_contrastive_loss = use_decoder_contrastive_loss
+        self.use_source_embeds = use_source_embeds
+        self.source_embed_mode = source_embed_mode
+        self.source_embed_train_mode = source_embed_train_mode
 
         self.patch_embed = patch_embed(
             img_size,
@@ -73,12 +84,13 @@ class MaskedAutoencoderViT(nn.Module):
         input_size = self.patch_embed.input_size
         self.input_size = input_size
 
-        if self.cls_embed:
+        if self.use_contrastive_loss:
             self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
+        if self.use_decoder_contrastive_loss:
             self.decoder_cls_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
 
         if self.use_source_embeds:
-            self.source_embeds = nn.Embedding(3, embed_dim)
+            self.source_embeds = nn.Embedding(num_source_tokens, embed_dim)
 
         if sep_pos_embed:
             self.pos_embed_spatial = nn.Parameter(
@@ -87,10 +99,12 @@ class MaskedAutoencoderViT(nn.Module):
             self.pos_embed_temporal = nn.Parameter(
                 torch.zeros(1, input_size[0], embed_dim)
             )
-            if self.cls_embed:
+            if self.use_contrastive_loss:
                 self.pos_embed_class = nn.Parameter(torch.zeros(1, 1, embed_dim))
+            if self.use_source_embeds and self.source_embed_mode == "append":
+                self.pos_embed_source = nn.Parameter(torch.zeros(1, 1, embed_dim))
         else:
-            if self.cls_embed:
+            if self.use_contrastive_loss:
                 _num_patches = num_patches + 1
             else:
                 _num_patches = num_patches
@@ -125,12 +139,16 @@ class MaskedAutoencoderViT(nn.Module):
             self.decoder_pos_embed_temporal = nn.Parameter(
                 torch.zeros(1, input_size[0], decoder_embed_dim)
             )
-            if self.cls_embed:
+            if self.use_decoder_contrastive_loss:
                 self.decoder_pos_embed_class = nn.Parameter(
                     torch.zeros(1, 1, decoder_embed_dim)
                 )
+            if self.use_source_embeds and self.source_embed_mode == "append":
+                self.decoder_pos_embed_source = nn.Parameter(
+                    torch.zeros(1, 1, decoder_embed_dim)
+                )
         else:
-            if self.cls_embed:
+            if self.use_decoder_contrastive_loss:
                 _num_patches = num_patches + 1
             else:
                 _num_patches = num_patches
@@ -159,6 +177,19 @@ class MaskedAutoencoderViT(nn.Module):
             self.t_pred_patch_size * patch_size**2 * in_chans,
             bias=True,
         )
+        if self.use_source_embeds and self.source_embed_mode == "append":
+                if self.source_embed_train_mode == "ema":
+                    self.decoder_pred_source = nn.Linear(
+                        decoder_embed_dim,
+                        embed_dim,
+                        bias=True,
+                    )
+                elif self.source_embed_train_mode == "ce":
+                    self.decoder_pred_source = nn.Linear(
+                        decoder_embed_dim,
+                        num_source_tokens,
+                        bias=True,
+                    )
 
         self.norm_pix_loss = norm_pix_loss
 
@@ -172,8 +203,10 @@ class MaskedAutoencoderViT(nn.Module):
         print("model initialized")
 
     def initialize_weights(self):
-        if self.cls_embed:
+        if self.use_contrastive_loss:
             torch.nn.init.trunc_normal_(self.cls_token, std=0.02)
+        if self.use_decoder_contrastive_loss:
+            torch.nn.init.trunc_normal_(self.decoder_cls_token, std=0.02)
         if self.sep_pos_embed:
             torch.nn.init.trunc_normal_(self.pos_embed_spatial, std=0.02)
             torch.nn.init.trunc_normal_(self.pos_embed_temporal, std=0.02)
@@ -181,12 +214,20 @@ class MaskedAutoencoderViT(nn.Module):
             torch.nn.init.trunc_normal_(self.decoder_pos_embed_spatial, std=0.02)
             torch.nn.init.trunc_normal_(self.decoder_pos_embed_temporal, std=0.02)
 
-            if self.cls_embed:
+            if self.use_contrastive_loss:
                 torch.nn.init.trunc_normal_(self.pos_embed_class, std=0.02)
+            if self.use_decoder_contrastive_loss:
                 torch.nn.init.trunc_normal_(self.decoder_pos_embed_class, std=0.02)
+            if self.use_source_embeds and self.source_embed_mode == "append":
+                torch.nn.init.trunc_normal_(self.pos_embed_source, std=0.02)
+                torch.nn.init.trunc_normal_(self.decoder_pos_embed_source, std=0.02)
         else:
             torch.nn.init.trunc_normal_(self.pos_embed, std=0.02)
             torch.nn.init.trunc_normal_(self.decoder_pos_embed, std=0.02)
+        if self.use_source_embeds:
+            torch.nn.init.trunc_normal_(self.source_embeds.weight, std=0.02)
+            if self.source_embed_mode == "append" and self.source_embed_train_mode == "ema":
+                self.register_buffer("source_embeds_ema", self.source_embeds.weight.data.clone())
         w = self.patch_embed.proj.weight.data
         if self.trunc_init:
             torch.nn.init.trunc_normal_(w)
@@ -314,11 +355,11 @@ class MaskedAutoencoderViT(nn.Module):
         N, L, D = x.shape  # batch, length, dim
         T = self.patch_embed.t_grid_size
         H, W = self.patch_embed.grid_size
-        assert L == T * H * W
+        assert L == T * H * W + (1 if self.use_source_embeds and self.source_embed_mode == "append" else 0)
 
         # adjust number to keep relative to image mask
         if self.img_mask is not None:
-            len_keep = int(T * self.n_mask_patches * (1 - mask_ratio))
+            len_keep = int((T * self.n_mask_patches + (1 if self.use_source_embeds and self.source_embed_mode == "append" else 0)) * (1 - mask_ratio))
         else:
             len_keep = int(L * (1 - mask_ratio))
 
@@ -326,9 +367,15 @@ class MaskedAutoencoderViT(nn.Module):
 
         # shift missing patches to not be selected
         if self.img_mask is not None:
-            noise = noise.view(N, T, H * W)
-            noise = noise + (1.0 - self.patch_mask)
-            noise = noise.view(N, L)
+            if self.use_source_embeds and self.source_embed_mode == "append":
+                noise_img = noise[:, 1:].view(N, T, H * W)
+                noise_img = noise_img + (1.0 - self.patch_mask)
+                noise_img = noise_img.view(N, L - 1)
+                noise = torch.cat((noise[:, :1], noise_img), dim=1)
+            else:
+                noise = noise.view(N, T, H * W)
+                noise = noise + (1.0 - self.patch_mask)
+                noise = noise.view(N, L)
 
         # sort noise for each sample
         ids_shuffle = torch.argsort(
@@ -367,32 +414,18 @@ class MaskedAutoencoderViT(nn.Module):
         
     def forward_encoder(self, x, mask_ratio, use_contrastive_loss=False, source_ids=None):
         x = self.patch_embed(x)
-        
         N, T, L, C = x.shape
-
         x = x.reshape(N, T * L, C)
         
 
-        # masking: length -> length * mask_ratio
-        if not use_contrastive_loss:
-            x, mask, ids_restore, ids_keep = self.random_masking(x, mask_ratio)
-            x = x.view(N, -1, C)
-        else:
-            [x1,x2], [mask1,mask2], ids_restore, ids_keep = self.random_masking(x, mask_ratio, use_contrastive_loss=use_contrastive_loss)
-            x1 = x1.view(len(x1), -1, C)
-            x2 = x2.view(len(x2), -1, C)
-        
-        # append cls token
-        if self.cls_embed:
-            cls_token = self.cls_token
-            cls_tokens = cls_token.expand(x.shape[0], -1, -1)
-            if not use_contrastive_loss:
-                x = torch.cat((cls_tokens, x), dim=1)
-            else:
-                x1 = torch.cat((cls_tokens, x1), dim=1)
-                x2 = torch.cat((cls_tokens, x2), dim=1)
-
-        # add pos embed w/o cls token
+        if source_ids is not None:
+            assert source_ids.ndim == 1, "source_ids should be a 1D tensor of source indices"
+            assert torch.all((source_ids >= 0) & (source_ids <= 2)), "All values in source_ids must be integers between 0 and 2"
+            source_embeds = self.source_embeds(source_ids)  # bs, embed_dim
+            if self.source_embed_mode == "append":
+                x = torch.cat((source_embeds.unsqueeze(1), x), dim=1)
+            elif self.source_embed_mode == "add":
+                x = x + source_embeds.unsqueeze(1)
         if self.sep_pos_embed:
             pos_embed = self.pos_embed_spatial.repeat(
                 1, self.input_size[0], 1
@@ -402,61 +435,38 @@ class MaskedAutoencoderViT(nn.Module):
                 dim=1,
             )
             pos_embed = pos_embed.expand(x.shape[0], -1, -1)
-            pos_embed = torch.gather(
-                pos_embed,
-                dim=1,
-                index=ids_keep.unsqueeze(-1).repeat(1, 1, pos_embed.shape[2]),
-            )
-            if self.cls_embed:
+            if self.use_source_embeds and self.source_embed_mode == "append":
                 pos_embed = torch.cat(
                     [
-                        self.pos_embed_class.expand(pos_embed.shape[0], -1, -1),
+                        self.pos_embed_source.expand(pos_embed.shape[0], -1, -1),
                         pos_embed,
                     ],
                     1,
                 )
+            x = x + pos_embed
         else:
-            if self.cls_embed:
-                cls_ind = 1
-            else:
-                cls_ind = 0
-            pos_embed = self.pos_embed[:, cls_ind:, :].expand(x.shape[0], -1, -1)
-            pos_embed = torch.gather(
-                pos_embed,
-                dim=1,
-                index=ids_keep.unsqueeze(-1).repeat(1, 1, pos_embed.shape[2]),
-            )
-            if self.cls_embed:
-                pos_embed = torch.cat(
-                    [
-                        self.pos_embed[:, :1, :].expand(x.shape[0], -1, -1),
-                        pos_embed,
-                    ],
-                    1,
-                )
-        if not use_contrastive_loss:
-            x = x.view([N, -1, C]) + pos_embed
-        else:
-            x1 = x1.view([len(x1), -1, C]) + pos_embed[:,:x1.shape[1]]
-            x2 = x2.view([len(x2), -1, C]) + torch.cat((pos_embed[:,:1], pos_embed[:,x1.shape[1]:]),dim=1)
+            raise NotImplementedError("use sep pos embeds")
 
-        if source_ids is not None:
-            assert source_ids.ndim == 1, "source_ids should be a 1D tensor of source indices"
-            assert torch.all((source_ids >= 0) & (source_ids <= 2)), "All values in source_ids must be integers between 0 and 2"
-            source_embeds = self.source_embeds(source_ids)  # bs, embed_dim
-            # Use token order: [cls, source, patch]
+        # masking: length -> length * mask_ratio
+        if not use_contrastive_loss:
+            x, mask, ids_restore, ids_keep = self.random_masking(x, mask_ratio)
+            x = x.view(N, -1, C)
+        else:
+            [x1,x2], [mask1,mask2], ids_restore, ids_keep = self.random_masking(x, mask_ratio, use_contrastive_loss=use_contrastive_loss)
+            x1 = x1.view(len(x1), -1, C)
+            x2 = x2.view(len(x2), -1, C)
+
+        # append cls token
+        if self.use_contrastive_loss:
+            cls_token = self.cls_token
+            cls_tokens = cls_token.expand(x.shape[0], -1, -1)
+            if self.sep_pos_embed:
+                cls_tokens = cls_tokens + self.pos_embed_class.expand(cls_tokens.shape[0], -1, -1)
             if not use_contrastive_loss:
-                if self.cls_embed:
-                    x = torch.cat((x[:, :1], source_embeds[:, None], x[:, 1:]), dim=1)
-                else:
-                    x = torch.cat((source_embeds[:, None], x), dim=1)
+                x = torch.cat((cls_tokens, x), dim=1)
             else:
-                if self.cls_embed:
-                    x1 = torch.cat((x1[:, :1], source_embeds[:, None], x1[:, 1:]), dim=1)
-                    x2 = torch.cat((x2[:, :1], source_embeds[:, None], x2[:, 1:]), dim=1)
-                else:
-                    x1 = torch.cat((source_embeds[:, None], x1), dim=1)
-                    x2 = torch.cat((source_embeds[:, None], x2), dim=1)
+                x1 = torch.cat((cls_tokens, x1), dim=1)
+                x2 = torch.cat((cls_tokens, x2), dim=1)
         
         if not use_contrastive_loss:
             # apply Transformer blocks
@@ -472,28 +482,22 @@ class MaskedAutoencoderViT(nn.Module):
             x2 = self.norm(x2)
 
         if not use_contrastive_loss:
-            if self.cls_embed:
-                # remove cls token
-                x = x[:, 1:, :]
-            if source_ids is not None:
-                # remove source token
-                x = x[:, 1:, :]
+            # if source_ids is not None:
+            #     # remove source token
+            #     x = x[:, 1:, :]
 
             return x, mask, ids_restore
         else:
-            if self.cls_embed:
-                # remove cls token
-                x1_cls = x1[:, :1, :]
-                x2_cls = x2[:, :1, :]
-                x1 = x1[:, 1:, :]
-                x2 = x2[:, 1:, :]
-            else:
-                x1_cls = x2_cls = None
-            if source_ids is not None:
-                # remove source token
-                x1 = x1[:, 1:, :]
-                x2 = x2[:, 1:, :]
-
+                        # remove cls token
+            x1_cls = x1[:, :1, :]
+            x2_cls = x2[:, :1, :]
+            x1 = x1[:, 1:, :]
+            x2 = x2[:, 1:, :]
+            # if source_ids is not None:
+            #     # remove source token
+            #     x1 = x1[:, 1:, :]
+            #     x2 = x2[:, 1:, :]
+            
             return [[x1,x2], [x1_cls,x2_cls]], [mask1,mask2], ids_restore
 
     def forward_encoder_with_mask(self, x, ids_keep):
@@ -561,7 +565,7 @@ class MaskedAutoencoderViT(nn.Module):
         x = self.norm(x)
         return x
 
-    def forward_decoder(self, x, ids_restore, use_contrastive_loss=False):
+    def forward_decoder(self, x, ids_restore, use_contrastive_loss=False, source_ids=None):
         N = x.shape[0]
         T = self.patch_embed.t_grid_size
         H, W = self.patch_embed.grid_size
@@ -571,15 +575,15 @@ class MaskedAutoencoderViT(nn.Module):
         C = x.shape[-1]
         
         # append mask tokens to sequence
-        mask_tokens = self.mask_token.repeat(N, T * H * W + 0 - x.shape[1], 1)
+        mask_tokens = self.mask_token.repeat(N, T * H * W + (1 if self.use_source_embeds and self.source_embed_mode == "append" else 0) - x.shape[1], 1)
         x_ = torch.cat([x[:, :, :], mask_tokens], dim=1)  # no cls token
-        x_ = x_.view([N, T * H * W, C])
+        x_ = x_.view([N, T * H * W + (1 if self.use_source_embeds and self.source_embed_mode == "append" else 0), C])
         x_ = torch.gather(
             x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, x_.shape[2])
         )  # unshuffle
-        x = x_.view([N, T * H * W, C])
+        x = x_.view([N, T * H * W + (1 if self.use_source_embeds and self.source_embed_mode == "append" else 0), C])
         # append cls token
-        if self.cls_embed:
+        if self.use_decoder_contrastive_loss:
             decoder_cls_token = self.decoder_cls_token
             decoder_cls_tokens = decoder_cls_token.expand(x.shape[0], -1, -1)
             x = torch.cat((decoder_cls_tokens, x), dim=1)
@@ -592,7 +596,15 @@ class MaskedAutoencoderViT(nn.Module):
                 self.input_size[1] * self.input_size[2],
                 dim=1,
             )
-            if self.cls_embed:
+            if self.use_source_embeds and self.source_embed_mode == "append":
+                decoder_pos_embed = torch.cat(
+                    [
+                        self.decoder_pos_embed_source.expand(decoder_pos_embed.shape[0], -1, -1),
+                        decoder_pos_embed,
+                    ],
+                    1,
+                )
+            if self.use_decoder_contrastive_loss:
                 decoder_pos_embed = torch.cat(
                     [
                         self.decoder_pos_embed_class.expand(
@@ -603,6 +615,7 @@ class MaskedAutoencoderViT(nn.Module):
                     1,
                 )
         else:
+            raise NotImplementedError("use sep pos embeds")
             decoder_pos_embed = self.decoder_pos_embed[:, :, :]
 
         # add pos embed
@@ -612,8 +625,10 @@ class MaskedAutoencoderViT(nn.Module):
 
         # drop patches outside image mask (and then only keep a subset a la VideoMAE2)
         if self.img_mask is not None:
-            if self.cls_embed:
+            if self.use_decoder_contrastive_loss:
                 decoder_cls_tokens, x = x[:, :1, :], x[:, 1:, :]
+            if self.use_source_embeds and self.source_embed_mode == "append":
+                decoder_source_tokens, x = x[:, :1, :], x[:, 1:, :]
             x = x.view([N, T, H * W, C])
             # x = x[:, :, self.patch_mask_indices]
             
@@ -625,20 +640,24 @@ class MaskedAutoencoderViT(nn.Module):
             x = x[:, :, included_patches]
             
             x = x.view([N, T * self.n_mask_patches, C])
-            if self.cls_embed:
+            if self.use_source_embeds and self.source_embed_mode == "append":
+                x = torch.cat((decoder_source_tokens, x), dim=1)
+            if self.use_decoder_contrastive_loss:
                 x = torch.cat((decoder_cls_tokens, x), dim=1)
 
         # apply Transformer blocks
         for blk in self.decoder_blocks:
             x = blk(x)
         x = self.decoder_norm(x)
+        if self.use_decoder_contrastive_loss:
+            decoder_cls_token, x = x[:, 0, :], x[:, 1:, :]
+        if self.use_source_embeds and self.source_embed_mode == "append":
+            # remove source token
+            reconstructed_source, x = x[:, 0, :], x[:, 1:, :]
+            reconstructed_source = self.decoder_pred_source(reconstructed_source)
 
         # predictor projection
         x = self.decoder_pred(x)
-
-        if self.cls_embed:
-            # remove cls token
-            x = x[:, 1:, :]
 
         # fill outside mask with zeros
         if self.img_mask is not None:
@@ -650,9 +669,14 @@ class MaskedAutoencoderViT(nn.Module):
             )
             x = x.view([N, T * H * W, C])
 
-        return x
+        ret_list = [x]
+        if self.use_source_embeds and self.source_embed_mode == "append":
+            ret_list.append(reconstructed_source)
+        if self.use_decoder_contrastive_loss:
+            ret_list.append(decoder_cls_token)
+        return ret_list
 
-    def forward_loss(self, imgs, pred, mask):
+    def forward_loss(self, imgs, pred, mask, reconstructed_source=None, source_ids=None):
         """
         imgs: [N, C, T, H, W]
         pred: [N, t*h*w, u*p*p*C]
@@ -678,11 +702,22 @@ class MaskedAutoencoderViT(nn.Module):
         loss = (pred - target) ** 2
         if self.img_mask is not None:
             # exclude missing pixels from loss
+            if self.use_source_embeds and self.source_embed_mode == "append":
+                mask = mask[:, 1:]
             mask = mask.unsqueeze(-1) * self.img_mask_patches
         else:
             loss = loss.mean(dim=-1)  # [N, L], mean loss per patch
 
         loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
+
+        if reconstructed_source is not None:
+            if self.source_embed_train_mode == "ema":
+                source_ema_targs = F.embedding(source_ids, self.source_embeds_ema.to(source_ids.device), None, None, 2.0, False, False)
+                loss_source = F.mse_loss(reconstructed_source, source_ema_targs)
+            elif self.source_embed_train_mode == "ce":
+                loss_source = F.cross_entropy(reconstructed_source, source_ids)
+            return loss, loss_source
+            
         return loss
     
     def forward_cyclic_loss(self, pred1, pred2, mask):
@@ -706,6 +741,14 @@ class MaskedAutoencoderViT(nn.Module):
             N, T, L, C = x.shape  # T: temporal; L: spatial
     
             x = x.view([N, T * L, C])
+            if source_ids is not None:
+                assert source_ids.ndim == 1, "source_ids should be a 1D tensor of source indices"
+                assert torch.all((source_ids >= 0) & (source_ids <= 2)), "All values in source_ids must be integers between 0 and 2"
+                source_embeds = self.source_embeds(source_ids)  # bs, embed_dim
+                if self.source_embed_mode == "append":
+                    x = torch.cat((source_embeds.unsqueeze(1), x), dim=1)
+                elif self.source_embed_mode == "add":
+                    x = x + source_embeds.unsqueeze(1)
     
             # append cls token
             if self.cls_embed:
@@ -721,6 +764,15 @@ class MaskedAutoencoderViT(nn.Module):
                     self.input_size[1] * self.input_size[2],
                     dim=1,
                 )
+                # token order: [cls, source, patch]
+                if self.use_source_embeds and self.source_embed_mode == "append":
+                    pos_embed = torch.cat(
+                        [
+                            self.pos_embed_source.expand(pos_embed.shape[0], -1, -1),
+                            pos_embed,
+                        ],
+                        1,
+                    )
                 if self.cls_embed:
                     pos_embed = torch.cat(
                         [
@@ -737,21 +789,15 @@ class MaskedAutoencoderViT(nn.Module):
             if self.img_mask is not None:
                 if self.cls_embed:
                     cls_tokens, x = x[:, :1, :], x[:, 1:, :]
+                if self.use_source_embeds and self.source_embed_mode == "append":
+                    source_tokens, x = x[:, :1, :], x[:, 1:, :]
                 x = x.view([N, T, L, C])
                 x = x[:, :, self.patch_mask_indices]
                 x = x.view([N, T * self.n_mask_patches, C])
+                if self.use_source_embeds and self.source_embed_mode == "append":
+                    x = torch.cat((source_tokens, x), dim=1)
                 if self.cls_embed:
                     x = torch.cat((cls_tokens, x), dim=1)
-            
-            if source_ids is not None:
-                assert source_ids.ndim == 1, "source_ids should be a 1D tensor of source indices"
-                assert torch.all((source_ids >= 0) & (source_ids <= 2)), "All values in source_ids must be integers between 0 and 2"
-                source_embeds = self.source_embeds(source_ids)  # bs, embed_dim
-                # Use token order: [cls, source, patch]
-                if self.cls_embed:
-                    x = torch.cat((x[:, :1], source_embeds[:, None], x[:, 1:]), dim=1)
-                else:
-                    x = torch.cat((source_embeds[:, None], x), dim=1)
     
             # apply Transformer blocks
             for blk in self.blocks:
@@ -771,9 +817,21 @@ class MaskedAutoencoderViT(nn.Module):
         else:
             latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio, use_contrastive_loss=use_contrastive_loss, source_ids=source_ids)
             if not use_contrastive_loss:
-                pred = self.forward_decoder(latent, ids_restore, use_contrastive_loss=use_contrastive_loss)  # [N, L, p*p*C]
-                loss = self.forward_loss(imgs, pred, mask)
-                return loss, pred, mask, latent
+                assert not self.use_decoder_contrastive_loss, "decoder contrastive loss cannot be used without encoder contrastive loss"
+                ret_list = self.forward_decoder(latent, ids_restore, use_contrastive_loss=use_contrastive_loss, source_ids=source_ids)  # [N, L, p*p*C]
+                pred = ret_list.pop(0)
+                if self.use_source_embeds and self.source_embed_mode == "append":
+                    reconstructed_source = ret_list.pop(0)
+                else:
+                    reconstructed_source = None
+                loss = self.forward_loss(imgs, pred, mask, reconstructed_source=reconstructed_source, source_ids=source_ids)
+                if self.use_source_embeds and self.source_embed_mode == "append":  
+                    loss, source_loss = loss
+                    # remove source token from mask so that it can be unpatchified
+                    mask = mask[:, 1:]
+                else:
+                    source_loss = torch.tensor(0.0)
+                return loss, source_loss, pred, mask, latent
             else:
                 latent, cls_tok = latent
                 latent1, latent2 = latent
@@ -782,12 +840,34 @@ class MaskedAutoencoderViT(nn.Module):
                 
                 true_mask = copy.deepcopy(mask1)
                 true_mask[mask2==0]=0 # dont try to predict the masks that were fed to the other encoder
-                pred1 = self.forward_decoder(latent1, ids_restore, use_contrastive_loss=use_contrastive_loss)  # [N, L, p*p*C]
-                pred2 = self.forward_decoder(latent2, ids_restore, use_contrastive_loss=use_contrastive_loss)  # [N, L, p*p*C]
+                ret_list1 = self.forward_decoder(latent1, ids_restore, use_contrastive_loss=use_contrastive_loss)  # [N, L, p*p*C]
+                pred1 = ret_list1.pop(0)
+                if self.use_source_embeds and self.source_embed_mode == "append":
+                    reconstructed_source1 = ret_list1.pop(0)
+                else:
+                    reconstructed_source1 = None
+                if self.use_decoder_contrastive_loss:
+                    decoder_cls_token1 = ret_list1.pop(0)
+                ret_list2 = self.forward_decoder(latent2, ids_restore, use_contrastive_loss=use_contrastive_loss)  # [N, L, p*p*C]
+                pred2 = ret_list2.pop(0)
+                if self.use_source_embeds and self.source_embed_mode == "append":
+                    reconstructed_source2 = ret_list2.pop(0)
+                else:
+                    reconstructed_source2 = None
+                if self.use_decoder_contrastive_loss:
+                    decoder_cls_token2 = ret_list2.pop(0)
                 
-                loss1 = self.forward_loss(imgs, pred1, true_mask)
-                loss2 = self.forward_loss(imgs, pred2, true_mask)
-                # loss3 = self.forward_cyclic_loss(pred1, pred2, true_mask)
+                recon_loss1 = self.forward_loss(imgs, pred1, true_mask, reconstructed_source=reconstructed_source1, source_ids=source_ids)
+                recon_loss2 = self.forward_loss(imgs, pred2, true_mask, reconstructed_source=reconstructed_source2, source_ids=source_ids)
+                if self.use_source_embeds and self.source_embed_mode == "append":
+                    recon_loss1, source_loss1 = recon_loss1
+                    recon_loss2, source_loss2 = recon_loss2
+                    # remove source token from mask so that it can be unpatchified
+                    mask1 = mask1[:, 1:]
+                    mask2 = mask2[:, 1:]
+                else:
+                    source_loss1 = torch.tensor(0.0)
+                    source_loss2 = torch.tensor(0.0)
 
                 if cls_tok1 is not None:
                     # standard infonce loss
@@ -795,11 +875,18 @@ class MaskedAutoencoderViT(nn.Module):
                     all_cls_proj = self.simclr_handler(all_cls)
 
                     # @todo: implement a temp schedule
-                    loss3 = SimCLRHandler.simclr_loss(all_cls_proj, temp=0.006, distributed=distributed)
+                    encoder_cont_loss = SimCLRHandler.simclr_loss(all_cls_proj, temp=0.006, distributed=distributed)
                 else:
-                    loss3 = 0
+                    encoder_cont_loss = torch.tensor(0.0)
 
-                return loss1, loss2, loss3, pred1, pred2, mask1, mask2, true_mask, latent1, latent2
+                if self.use_decoder_contrastive_loss:
+                    all_decoder_cls = torch.cat([decoder_cls_token1, decoder_cls_token2], dim=0)
+                    all_decoder_cls_proj = self.decoder_simclr_handler(all_decoder_cls)
+                    decoder_cont_loss = SimCLRHandler.simclr_loss(all_decoder_cls_proj, temp=0.006, distributed=distributed)
+                else:
+                    decoder_cont_loss = torch.tensor(0.0)
+
+                return recon_loss1, source_loss1, recon_loss2, source_loss2, encoder_cont_loss, decoder_cont_loss, pred1, pred2, mask1, mask2, true_mask, latent1, latent2
 
     def forward_head(self, x):
         # classifier

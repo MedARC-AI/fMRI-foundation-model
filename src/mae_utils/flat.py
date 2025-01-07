@@ -138,6 +138,7 @@ def create_hcp_flat(
     shuffle: Optional[bool] = None,
     buffer_size_mb: int = 3840,
     gsr: Optional[bool] = True,
+    sub_list: Optional[Union[Literal["train", "test"], List[str]]] = None,
 ) -> wds.WebDataset:
     """
     Create HCP-Flat dataset. Yields samples of (key, images) where key is the webdataset
@@ -163,7 +164,7 @@ def create_hcp_flat(
         all_events_path = "/weka/proj-medarc/shared/HCP-Flat/all_events.json.gz"
         with gzip.open(all_events_path) as f:
             all_events = json.load(f)
-        clipping = hcp_event_clips(all_events, frames)
+        clipping = hcp_event_clips(frames)
 
     # In training, we resample shards with replacement independently in every worker and
     # yield batches up to the target number of samples. In test, we iterate over the
@@ -179,6 +180,8 @@ def create_hcp_flat(
 
     # Nb, in initial pretraining runs we shuffled before generating clips, which
     # resulted in less random batches. Tbd whether this makes a difference.
+    if sub_list:
+        sub_list = get_hcp_flat_sub_list(root, sub_list)
     dataset = (
         wds.WebDataset(
             urls,
@@ -186,7 +189,7 @@ def create_hcp_flat(
             shardshuffle=1000 if shuffle else False,
             nodesplitter=wds.split_by_node,
             workersplitter=wds.split_by_worker,
-            select_files=partial(select_files_hcp, task_only=clip_mode=="event"),
+            select_files=partial(select_files_hcp, task_only=clip_mode=="event", sub_list=sub_list),
         )
         .decode()
         .map(partial(extract_sample,gsr=gsr))
@@ -217,46 +220,104 @@ def load_hcp_flat_mask(folder="/weka/proj-medarc/shared/HCP-Flat/") -> torch.Ten
     mask = torch.as_tensor(mask)
     return mask
 
-def hcp_event_clips(
-    all_events: Dict[str, List[Dict[str, Any]]],
-    frames: int = 16,
-    delay: float = DEFAULT_DELAY_SECS,
-):
-    def _filter(src: IterableDataset[Tuple[np.ndarray, Dict[str, Any]]]):
-        for img, meta in src:
-            tr = HCP_TR[meta["mag"]]
-            events = all_events[meta["key"]]
-            if not events or meta["task"] not in INCLUDE_TASKS:
-                continue
+# def hcp_event_clips(
+#     all_events: Dict[str, List[Dict[str, Any]]],
+#     frames: int = 16,
+#     delay: float = DEFAULT_DELAY_SECS,
+# ):
+#     def _filter(src: IterableDataset[Tuple[np.ndarray, Dict[str, Any]]]):
+#         for img, meta, event, stats in src:
+#             tr = HCP_TR[meta["mag"]]
+#             events = all_events[meta["key"]]
+#             if not events or meta["task"] not in INCLUDE_TASKS:
+#                 continue
 
+#             for event in events:
+#                 cond = event["trial_type"]
+#                 if cond not in INCLUDE_CONDS:
+#                     continue
+
+#                 onset = event["onset"]
+#                 duration = event["duration"]
+#                 onset_idx = int((onset + delay) / tr)
+#                 # sometimes the end of the trial is cut off
+#                 offset_idx = min(int((onset + delay + duration) / tr), len(img))
+#                 count = (offset_idx - onset_idx) // frames
+#                 for ii in range(count):
+#                     start = onset_idx + ii * frames
+#                     clip = img[start : start + frames].copy()
+#                     meta = {**meta, "start": start, "trial_type": cond}
+#                     yield clip, meta
+#     return _filter
+
+def hcp_event_clips(
+    frames: int = 16,
+    delay_secs: float = DEFAULT_DELAY_SECS,
+):
+    def _filter(src: IterableDataset[Dict[str, Any]]):
+        for sample in src:
+            bold = sample[0]
+            meta = sample[1]
+            events = sample[2]
+            tr = HCP_TR[meta["mag"]]
             for event in events:
                 cond = event["trial_type"]
-                if cond not in INCLUDE_CONDS:
-                    continue
-
                 onset = event["onset"]
                 duration = event["duration"]
-                onset_idx = int((onset + delay) / tr)
-                # sometimes the end of the trial is cut off
-                offset_idx = min(int((onset + delay + duration) / tr), len(img))
-                count = (offset_idx - onset_idx) // frames
+
+                if cond not in INCLUDE_CONDS:
+                    continue
+                first_idx = int((onset + delay_secs) / tr)
+                # we extract at least one clip per block, and then as many as fit
+                
+                count = max(int(duration / tr / frames), 1)
                 for ii in range(count):
-                    start = onset_idx + ii * frames
-                    clip = img[start : start + frames].copy()
+                    start = first_idx + ii * frames
+                    stop = start + frames
+                    # sometimes the trial extends past the end of the run
+                    if stop > len(bold):
+                        break
+
+                    clip = bold[start:stop].copy()
                     meta = {**meta, "start": start, "trial_type": cond}
-                    yield clip, meta
+                    yield {"image": clip, "meta": meta}
+    return _filter
+    
+def get_hcp_flat_sub_list(
+    root: Optional[str] = None,
+    split: Literal["train", "test"] = "train",
+):
+    root = root or os.environ.get("HCP_FLAT_ROOT") or HCP_FLAT_ROOT
+    sub_list = f"{root}/subjects_{split}.txt"
+    if isinstance(sub_list, str):
+        sub_list = np.loadtxt(sub_list, dtype=str).tolist()
+
+    if sub_list is not None:
+        sub_list = set(sub_list)
+    return sub_list
 
 def select_files_hcp(fname: str, *, 
-                 task_only: bool = False):
+                 task_only: bool = False,
+                 sub_list: Optional[set[str]] = None) -> bool:
+    # Filtering based on subjects splits. Ej. Train and Test
+    if sub_list:
+        key, ext = fname.split(".", maxsplit=1)
+        ents = dict(kv.split("-") for kv in key.split("_"))
+        if sub_list and ents["sub"] not in sub_list:
+            return False
+
     # Define the file suffixes to keep
     suffix = ".".join(fname.split(".")[1:])
-    keep = suffix in {"bold.npy", "meta.json", "events.json", "misc.npz"}
+    if suffix not in {"bold.npy", "meta.json", "events.json", "misc.npz"}:
+        return False
 
     # Additional filtering based on task_only
     if task_only:
-        keep = keep and fnmatch(fname, "*mod-tfMRI*mag-3T*")
+        if not fnmatch(fname, "*mod-tfMRI*mag-3T*"):
+            return False
+    
+    return True
 
-    return keep
 
 # ALL #
 import re

@@ -164,7 +164,7 @@ def create_hcp_flat(
         all_events_path = "/weka/proj-medarc/shared/HCP-Flat/all_events.json.gz"
         with gzip.open(all_events_path) as f:
             all_events = json.load(f)
-        clipping = hcp_event_clips(frames)
+        clipping = hcp_event_clips(frames, mask=load_hcp_flat_mask(), gsr=gsr)
 
     # In training, we resample shards with replacement independently in every worker and
     # yield batches up to the target number of samples. In test, we iterate over the
@@ -253,6 +253,8 @@ def load_hcp_flat_mask(folder="/weka/proj-medarc/shared/HCP-Flat/") -> torch.Ten
 def hcp_event_clips(
     frames: int = 16,
     delay_secs: float = DEFAULT_DELAY_SECS,
+    mask = None,
+    gsr: bool = False
 ):
     def _filter(src: IterableDataset[Dict[str, Any]]):
         for sample in src:
@@ -279,8 +281,9 @@ def hcp_event_clips(
                         break
 
                     clip = bold[start:stop].copy()
+                    clip = to_tensor(clip, mask=mask, gsr=gsr)
                     meta = {**meta, "start": start, "trial_type": cond}
-                    yield {"image": clip, "meta": meta}
+                    yield clip, meta
     return _filter
     
 def get_hcp_flat_sub_list(

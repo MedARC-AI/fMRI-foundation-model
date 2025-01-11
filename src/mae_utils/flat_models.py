@@ -793,7 +793,7 @@ class MaskedAutoencoderViT(nn.Module):
                     source_tokens, x = x[:, :1, :], x[:, 1:, :]
                 x = x.view([N, T, L, C])
                 x = x[:, :, self.patch_mask_indices]
-                x = x.view([N, T * self.n_mask_patches, C])
+                x = x.reshape([N, T * self.n_mask_patches, C])
                 if self.use_source_embeds and self.source_embed_mode == "append":
                     x = torch.cat((source_tokens, x), dim=1)
                 if self.cls_embed:

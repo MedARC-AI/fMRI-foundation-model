@@ -1,16 +1,18 @@
-model_name: "BOTHflat_small_gsrFalse_sourceadd_cont"
-datasets_to_include: "BOTH" # ["NSD", "HCP", "BOTH"]
+model_name: "HCPflat_large_gsrFalse_submin990000_59583" #"HCPflat_large_gsrFalse_revisedDL2_26146" #"HCPflat_large_gsrFalse_revisedDL2" #"NSDflat_large_gsrFalse_5sess_57734" #"NSDflat_large_gsrFalse_40sess_9908"
+datasets_to_include: "HCP" # ["NSD", "HCP", "BOTH"]
 hcp_flat_path: "/weka/proj-medarc/shared/HCP-Flat"
 nsd_flat_path: "/weka/proj-medarc/shared/NSD-Flat"
 
-model_size: "small"
+model_size: "large"
 global_pool: False
 cls_forward: False
 
 gsr: False
-use_contrastive_loss: True
+use_contrastive_loss: False
 use_decoder_contrastive_loss: False
-use_source_embeds: True
+cls_embed: False
+decoder_cls_embed: False
+use_source_embeds: False
 source_embed_mode: "add"  # "append" or "add"
 source_embed_train_mode: "ce" # ema or ce
 
@@ -21,7 +23,6 @@ num_frames: 16
 mask_ratio: .75
 pred_t_dim: 8
 t_patch_size: 2
-cls_embed: True
 no_qkv_bias: False
 sep_pos_embed: True # has to be true for source embeds
 trunc_init: False
@@ -29,17 +30,24 @@ norm_pix_loss: False
 contrastive_loss_weight: 1.0
 
 # Training Configs
-batch_size: 16 # set to 32 if not contrastive, 16 if contrastive because it'll double the bs
+batch_size: 32 # change from 64 to 32 if contrastive, as you'll effectively be doubling bs
 num_workers: 8
 num_epochs: 100 # 200 because using 2 datasets now instead of 1 # 100 for MAE pretraining, can use less for downstream
 seed: 42
 base_lr: 1.0e-3 # Keep the x.0 else will be converted to string
-num_samples_per_epoch: 200000
+num_samples_per_epoch: 200000 #25000 #200000
 test_num_samples_per_epoch: 50000
 grad_clip: 1.0  # set 0 for no clip
 grad_accumulation_steps: 1
 test_set: False
 plotting: True
+
+# NSD dataloader specific
+# num_sessions only gets used for main.ipynb, not main_finetuning.ipynb
+num_sessions: 1 # 40 
+
+# HCP dataloader specific
+sub_min: 0 #990000 #0 # if greater than zero, only allows files where subject number is >= sub_min
 
 # Downstream probe config
 probe_num_samples_per_epoch: 100000

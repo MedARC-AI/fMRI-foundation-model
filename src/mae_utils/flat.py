@@ -91,7 +91,7 @@ def create_nsd_flat(
     dataset = (
         wds.WebDataset(
             urls,
-            resampled=False,
+            resampled=True,
             shardshuffle=1000 if shuffle else False,
             nodesplitter=wds.split_by_node,
             workersplitter=wds.split_by_worker,
@@ -138,6 +138,7 @@ def create_hcp_flat(
     shuffle: Optional[bool] = None,
     buffer_size_mb: int = 3840,
     gsr: Optional[bool] = True,
+    sub_min: Optional[int] = 0,
 ) -> wds.WebDataset:
     """
     Create HCP-Flat dataset. Yields samples of (key, images) where key is the webdataset
@@ -182,11 +183,11 @@ def create_hcp_flat(
     dataset = (
         wds.WebDataset(
             urls,
-            resampled=False,
+            resampled=True,
             shardshuffle=1000 if shuffle else False,
             nodesplitter=wds.split_by_node,
             workersplitter=wds.split_by_worker,
-            select_files=partial(select_files_hcp, task_only=clip_mode=="event"),
+            select_files=partial(select_files_hcp, task_only=clip_mode=="event", sub_min=sub_min),
         )
         .decode()
         .map(partial(extract_sample,gsr=gsr))
@@ -247,7 +248,8 @@ def hcp_event_clips(
                     yield clip, meta
 
 def select_files_hcp(fname: str, *, 
-                 task_only: bool = False):
+                 task_only: bool = False,
+                 sub_min: int = 0):
     # Define the file suffixes to keep
     suffix = ".".join(fname.split(".")[1:])
     keep = suffix in {"bold.npy", "meta.json", "events.json", "misc.npz"}
@@ -255,6 +257,11 @@ def select_files_hcp(fname: str, *,
     # Additional filtering based on task_only
     if task_only:
         keep = keep and fnmatch(fname, "*mod-tfMRI*mag-3T*")
+
+    if sub_min > 0:
+        match = re.search(r"sub-(\d+)", fname)
+        subject_id = int(match.group(1))
+        keep = keep and (sub_min <= subject_id)
 
     return keep
 
@@ -384,21 +391,18 @@ def seq_clips(frames: int = 16, mindeye_only=False, mindeye_TR_delay=3, only_sha
                     if only_shared1000 is None:
                         if not (nsd_id in shared1000):
                             clip = img[start : start + frames].copy()
-                            meta = {**meta, "start": start}
                             clip = to_tensor(clip, mask=mask, gsr=gsr)
-                            yield clip, int(f"{meta['ses']:02}{meta['run']:02}{start:03}"), nsd_id, meta['sub'], meanstd['mean'], meanstd['std']
+                            yield clip, f"{int(meta['ses']):02}{int(meta['run']):02}{start:03}", nsd_id, meta['sub'], meanstd['mean'], meanstd['std']
                     elif only_shared1000:
                         if nsd_id in shared1000:
                             clip = img[start : start + frames].copy()
-                            meta = {**meta, "start": start}
                             clip = to_tensor(clip, mask=mask, gsr=gsr)
                             yield clip, meta, nsd_id, meta['sub'], meanstd['mean'], meanstd['std']
                     else:
                         # if not (nsd_id in shared1000):
                         clip = img[start : start + frames].copy()
-                        meta = {**meta, "start": start}
                         clip = to_tensor(clip, mask=mask, gsr=gsr)
-                        yield clip, int(f"{meta['ses']:02}{meta['run']:02}{start:03}"), nsd_id, meta['sub'], meanstd['mean'], meanstd['std']
+                        yield clip, f"{int(meta['ses']):02}{int(meta['run']):02}{start:03}", nsd_id, meta['sub'], meanstd['mean'], meanstd['std']
             else:
                 offsets = np.arange(frames)
                 for offset in offsets:

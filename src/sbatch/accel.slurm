@@ -4,21 +4,22 @@
 #SBATCH --job-name=found
 #SBATCH --ntasks-per-node=1
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:2
-#SBATCH --gpus-per-task=2       # Set to equal gres=gpu:#!
+#SBATCH --gres=gpu:4
+#SBATCH --gpus-per-task=4       # Set to equal gres=gpu:#!
 #SBATCH --cpus-per-task=176     # 40 / 80 / 176 distributed across node
 #SBATCH --time=80:00:00         # total run time limit (HH:MM:SS)
 #SBATCH -e slurms/%j.err        # first create a "slurms" folder in current directory to store logs
 #SBATCH -o slurms/%j.out
 #SBATCH --comment=medarc
 #SBATCH --no-requeue
+#SBATCH --exclude=ip-10-0-128-54
 
-export NUM_GPUS=2 # Set to equal gres=gpu:#!
+export NUM_GPUS=4 # Set to equal gres=gpu:#!
 echo NUM_GPUS=$NUM_GPUS
 
 source ~/.bashrc
 source /admin/home-paulscotti/foundation_env/bin/activate
-cd /weka/proj-fmri/paulscotti/fMRI-foundation-model/flat/src
+cd /weka/proj-fmri/paulscotti/fMRI-foundation-model/src
 
 jupyter nbconvert main.ipynb --to python
 if [ $? -ne 0 ]; then

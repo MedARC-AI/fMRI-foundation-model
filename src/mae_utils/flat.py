@@ -77,6 +77,8 @@ def create_nsd_flat(
     sample key and images is shape (C, T, H, W).
     """
     urls = get_nsd_flat_urls(root, shards)
+    # 300 tar paths aka shards for NSD
+    # each tar has .npy files like sub-08_ses-24_run-14.bold.npy already shuffled subj & sess
 
     clipping = seq_clips(frames, mindeye_only=mindeye_only, 
                          only_shared1000=only_shared1000, mindeye_TR_delay=mindeye_TR_delay,
@@ -92,15 +94,15 @@ def create_nsd_flat(
         wds.WebDataset(
             urls,
             resampled=True,
-            shardshuffle=1000 if shuffle else False,
+            shardshuffle=300 if shuffle else False,
             nodesplitter=wds.split_by_node,
             workersplitter=wds.split_by_worker,
             select_files=partial(select_files, sub=sub, ses=ses, run=run, num_sessions=num_sessions),
         )
+        .shuffle(buffer_size) # batch takes samples randomly across all the shards
         .decode()
         .map(partial(extract_sample,gsr=gsr))
         .compose(clipping)
-        .shuffle(buffer_size)
     )
     return dataset
 
@@ -161,10 +163,11 @@ def create_hcp_flat(
     if clip_mode == "seq":
         clipping = seq_clips(frames, mask=load_hcp_flat_mask(), gsr=gsr)
     elif clip_mode == "event":
-        all_events_path = "/weka/proj-medarc/shared/HCP-Flat/all_events.json.gz"
-        with gzip.open(all_events_path) as f:
-            all_events = json.load(f)
-        clipping = hcp_event_clips(all_events, frames)
+        err # need to debug this
+        # all_events_path = "/weka/proj-medarc/shared/HCP-Flat/all_events.json.gz"
+        # with gzip.open(all_events_path) as f:
+        #     all_events = json.load(f)
+        # clipping = hcp_event_clips(all_events, frames)
 
     # In training, we resample shards with replacement independently in every worker and
     # yield batches up to the target number of samples. In test, we iterate over the
@@ -379,6 +382,7 @@ def batch_unmask(img: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
 
 def seq_clips(frames: int = 16, mindeye_only=False, mindeye_TR_delay=3, only_shared1000=False, mask=None, gsr=False):
     def _filter(src: IterableDataset[Tuple[np.ndarray, Dict[str, Any]]]):
+        offset = np.random.choice(np.arange(frames-1))
         for ii, (img, meta, events, meanstd) in enumerate(src):
             if mindeye_only:
                 group = [(s['index'], s['nsd_id']) for s in events]
@@ -404,13 +408,14 @@ def seq_clips(frames: int = 16, mindeye_only=False, mindeye_TR_delay=3, only_sha
                         clip = to_tensor(clip, mask=mask, gsr=gsr)
                         yield clip, f"{int(meta['ses']):02}{int(meta['run']):02}{start:03}", nsd_id, meta['sub'], meanstd['mean'], meanstd['std']
             else:
-                offsets = np.arange(frames)
-                for offset in offsets:
-                    for start in range(offset, len(img) - frames, frames):
-                        # copy to avoid a memory leak due to storing the entire underlying array
-                        # https://github.com/webdataset/webdataset/issues/354
-                        clip = img[start : start + frames].copy()
-                        meta = {**meta, "start": start}
-                        clip = to_tensor(clip, mask=mask, gsr=gsr)
-                        yield clip, meta, meanstd['mean'], meanstd['std'] # events was removed due to dataloading error
+                # you dont want len(starts)>batch_size or else all samples come from exact same npy file!
+                # but if len(starts)=1 then dataloading is slower and samples never come from same npy
+                starts = np.random.choice(np.arange(offset, len(img) - frames, frames), size=8, replace=False)
+                for start in starts:
+                    # copy to avoid a memory leak due to storing the entire underlying array
+                    # https://github.com/webdataset/webdataset/issues/354
+                    clip = img[start : start + frames].copy()
+                    meta = {**meta, "start": start}
+                    clip = to_tensor(clip, mask=mask, gsr=gsr)
+                    yield clip, meta, meanstd['mean'], meanstd['std'] 
     return _filter

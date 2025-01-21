@@ -1,5 +1,5 @@
-model_name: "HCPflat_large_gsrFalse_submin990000_59583" #"HCPflat_large_gsrFalse_revisedDL2_26146" #"HCPflat_large_gsrFalse_revisedDL2" #"NSDflat_large_gsrFalse_5sess_57734" #"NSDflat_large_gsrFalse_40sess_9908"
-datasets_to_include: "HCP" # ["NSD", "HCP", "BOTH"]
+model_name: "BOTHflat_large_gsrFalse_newdl" #"HCPflat_large_gsrFalse_revisedDL2_26146" #"HCPflat_large_gsrFalse_revisedDL2" #"NSDflat_large_gsrFalse_5sess_57734" #"NSDflat_large_gsrFalse_40sess_9908"
+datasets_to_include: "NSD" # ["NSD", "HCP", "BOTH"]
 hcp_flat_path: "/weka/proj-medarc/shared/HCP-Flat"
 nsd_flat_path: "/weka/proj-medarc/shared/NSD-Flat"
 
@@ -31,7 +31,7 @@ contrastive_loss_weight: 1.0
 
 # Training Configs
 batch_size: 32 # change from 64 to 32 if contrastive, as you'll effectively be doubling bs
-num_workers: 8
+num_workers: 1 # I dont know why but num_workers seems faster than num_workers=0 or num_workers>1
 num_epochs: 100 # 200 because using 2 datasets now instead of 1 # 100 for MAE pretraining, can use less for downstream
 seed: 42
 base_lr: 1.0e-3 # Keep the x.0 else will be converted to string
@@ -44,7 +44,7 @@ plotting: True
 
 # NSD dataloader specific
 # num_sessions only gets used for main.ipynb, not main_finetuning.ipynb
-num_sessions: 1 # 40 
+num_sessions: 40 # 40 
 
 # HCP dataloader specific
 sub_min: 0 #990000 #0 # if greater than zero, only allows files where subject number is >= sub_min
